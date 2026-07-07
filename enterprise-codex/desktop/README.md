@@ -41,10 +41,23 @@ desktop/vendor/codex/codex          # macOS/Linux (or codex.exe on Windows)
 `electron-builder` copies it to the app's `Resources/codex/`. At runtime the app
 auto-detects it as the launch target (overridable in Settings).
 
+## Point the app at your gateway (so employees configure nothing)
+
+Before building, set your Mac mini's LAN address in `desktop/app-config.json`:
+
+```json
+{ "gatewayUrl": "http://192.168.1.50:8080", "codexBin": "" }
+```
+
+This is baked into the build and used as the default, so employees never type a
+URL. (They can still override it under Settings, and `GATEWAY_URL` env wins in dev.)
+
 ## Build installers
 
 ```bash
 cd desktop
+# 1) set gatewayUrl in app-config.json  2) drop the codex binary in vendor/codex/
+npm install
 npm run dist         # -> dist/Company Codex-0.1.0.dmg  (macOS)
 # npm run dist:all   # mac + win + linux (needs the respective toolchains)
 ```

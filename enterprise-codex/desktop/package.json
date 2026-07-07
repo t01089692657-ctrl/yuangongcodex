@@ -25,7 +25,7 @@
   "build": {
     "appId": "com.yourco.codex",
     "productName": "Company Codex",
-    "files": ["main.js", "preload.cjs", "renderer/**/*"],
+    "files": ["main.js", "preload.cjs", "app-config.json", "renderer/**/*"],
     "extraResources": [
       { "from": "../client", "to": "app-src/client" },
       { "from": "../skills", "to": "app-src/skills" },

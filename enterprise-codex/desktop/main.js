@@ -27,11 +27,20 @@ const bundledCodex = app.isPackaged
   ? path.join(process.resourcesPath, 'codex', process.platform === 'win32' ? 'codex.exe' : 'codex')
   : (process.env.CODEX_BIN || '');
 
+// Baked build-time defaults: the admin sets gatewayUrl in app-config.json before
+// `npm run dist`, so employees configure NOTHING. Per-user Settings still win.
+function appConfig() {
+  for (const p of [path.join(__dirname, 'app-config.json'), path.join(process.resourcesPath || '.', 'app-config.json')]) {
+    try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { /* try next */ }
+  }
+  return {};
+}
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 function loadSettings() {
+  const cfg = appConfig();
   const defaults = {
-    gatewayUrl: process.env.GATEWAY_URL || 'http://127.0.0.1:8080',
-    codexBin: bundledCodex && fs.existsSync(bundledCodex) ? bundledCodex : (process.env.CODEX_BIN || ''),
+    gatewayUrl: process.env.GATEWAY_URL || cfg.gatewayUrl || 'http://127.0.0.1:8080',
+    codexBin: (bundledCodex && fs.existsSync(bundledCodex)) ? bundledCodex : (process.env.CODEX_BIN || cfg.codexBin || ''),
     codexHome: path.join(app.getPath('home'), '.codex-managed'),
   };
   try { return { ...defaults, ...JSON.parse(fs.readFileSync(settingsFile(), 'utf8')) }; } catch { return defaults; }
