@@ -116,7 +116,8 @@ function htmlPage(res, status, title, body) {
 // Never send an upstream's raw key to the browser — show a masked hint only.
 function maskUpstream(u) {
   const k = u.apiKey || '';
-  const keyMasked = k ? `${k.slice(0, 4)}…${k.slice(-4)}` : '(none)';
+  // Never reveal a short key in full; only hint the tail of a long one.
+  const keyMasked = !k ? '(none)' : k.length < 12 ? '****' : `${k.slice(0, 4)}…${k.slice(-4)}`;
   const { apiKey, ...rest } = u;
   return { ...rest, keyMasked, hasKey: !!k };
 }

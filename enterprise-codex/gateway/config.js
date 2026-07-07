@@ -104,8 +104,9 @@ export const config = {
   activityCapture: env('ACTIVITY_CAPTURE', 'summary'),
   activitySummaryChars: Number(env('ACTIVITY_SUMMARY_CHARS', '240')),
 
-  // Max bytes for a proxied Codex request body (context can be large).
-  maxProxyBodyBytes: Number(env('MAX_PROXY_BODY_BYTES', String(25 * 1024 * 1024))),
+  // Max bytes for a proxied Codex request body (context can be large). A
+  // non-numeric value must not silently disable the cap -> fall back to 25 MB.
+  maxProxyBodyBytes: (() => { const n = Number(env('MAX_PROXY_BODY_BYTES', '')); return Number.isFinite(n) && n > 0 ? n : 25 * 1024 * 1024; })(),
 
   dataDir: env('DATA_DIR', path.join(__dirname, 'data')),
   seedFile: env('SEED_FILE', path.join(__dirname, 'data', 'employees.seed.json')),

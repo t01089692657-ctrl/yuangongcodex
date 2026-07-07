@@ -4,6 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
+// Weight must be a small positive integer — clamp BOTH ends so a huge/Infinity
+// weight from pasted account JSON can't blow up the proxy's rotation array.
+function clampWeight(w) {
+  const n = Math.floor(Number(w));
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(1000, n);
+}
+
 export class Store {
   constructor(dataDir, seedFile) {
     this.dataDir = dataDir;
@@ -143,7 +151,7 @@ export class Store {
       name: u.name || u.baseUrl,
       baseUrl: String(u.baseUrl).replace(/\/$/, ''),
       apiKey: u.apiKey || '',
-      weight: Math.max(1, Number(u.weight) || 1),
+      weight: clampWeight(u.weight),
       enabled: u.enabled !== false,
       addedBy: u.addedBy || 'admin',
       createdAt: new Date().toISOString(),
@@ -159,7 +167,7 @@ export class Store {
     const u = this.getUpstream(id);
     if (!u) return null;
     if (patch.name !== undefined) u.name = patch.name;
-    if (patch.weight !== undefined) u.weight = Math.max(1, Number(patch.weight) || 1);
+    if (patch.weight !== undefined) u.weight = clampWeight(patch.weight);
     if (patch.enabled !== undefined) u.enabled = !!patch.enabled;
     if (patch.baseUrl !== undefined) u.baseUrl = String(patch.baseUrl).replace(/\/$/, '');
     if (patch.apiKey) u.apiKey = patch.apiKey; // only overwrite when a new key is given
