@@ -31,10 +31,12 @@ export const config = {
   adminSessionSecret: env('ADMIN_SESSION_SECRET', 'admin-session-dev-secret'),
   adminSessionTtlSeconds: Number(env('ADMIN_SESSION_TTL_SECONDS', '3600')),
   // DEMO_MODE enables /auth/admin-login/mock (stands in for the Feishu OAuth
-  // callback). Set DEMO_MODE=false in production so only the real SSO path works.
-  demoMode: env('DEMO_MODE', 'true') !== 'false',
-  // Send the Secure cookie flag (enable in production behind HTTPS).
-  cookieSecure: env('COOKIE_SECURE', 'false') === 'true',
+  // callback). Fail-closed: OFF unless explicitly DEMO_MODE=true, so a real
+  // deploy never ships the anonymous mock-login backdoor by accident.
+  demoMode: env('DEMO_MODE', 'false') === 'true',
+  // Send the Secure cookie flag. Secure-by-default; opt out only for local
+  // http dev (the demo sets COOKIE_SECURE=false for http://127.0.0.1).
+  cookieSecure: env('COOKIE_SECURE', 'true') !== 'false',
 
   // Shared secret to verify the Feishu/Lark offboarding webhook.
   feishuWebhookSecret: env('FEISHU_WEBHOOK_SECRET', 'feishu-dev-secret'),
@@ -60,3 +62,29 @@ export const config = {
   skillsDir: env('SKILLS_DIR', path.join(__dirname, '..', 'skills')),
   adminDir: env('ADMIN_DIR', path.join(__dirname, '..', 'admin')),
 };
+
+// Built-in dev defaults that MUST be overridden in production.
+const DEV_DEFAULTS = {
+  adminToken: 'admin-dev-token',
+  adminSessionSecret: 'admin-session-dev-secret',
+  ssoSharedSecret: 'sso-dev-secret',
+  feishuWebhookSecret: 'feishu-dev-secret',
+};
+
+// Refuse to boot a production gateway with source-visible default secrets (a
+// default secret lets anyone forge a manager session / SSO assertion). In demo
+// mode we only warn, loudly.
+export function assertSecureConfig() {
+  const weak = Object.entries(DEV_DEFAULTS).filter(([k, v]) => config[k] === v).map(([k]) => k);
+  if (config.demoMode) {
+    console.warn('[gateway] DEMO_MODE=true — anonymous /auth/admin-login/mock is ENABLED. Never use in production.');
+    if (weak.length) console.warn(`[gateway] using dev-default secrets: ${weak.join(', ')}`);
+    return;
+  }
+  if (weak.length) {
+    throw new Error(
+      `Refusing to start: these secrets are still built-in dev defaults: ${weak.join(', ')}. ` +
+      `Set them to strong random values (openssl rand -hex 32), or run with DEMO_MODE=true for local demos.`,
+    );
+  }
+}

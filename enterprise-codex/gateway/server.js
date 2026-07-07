@@ -5,7 +5,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { config } from './config.js';
+import { config, assertSecureConfig } from './config.js';
 import { Store } from './store.js';
 import { issueKeyForEmployee, resolveKey, offboardEmployee, httpError, safeEqual, verifySsoAssertion, signSsoAssertion, signSession, verifySession } from './auth.js';
 import { proxyRequest } from './proxy.js';
@@ -37,7 +37,11 @@ function cookie(req, name) {
   for (const part of (req.headers.cookie || '').split(';')) {
     const eq = part.indexOf('=');
     if (eq < 0) continue;
-    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
+    if (part.slice(0, eq).trim() !== name) continue;
+    const raw = part.slice(eq + 1).trim();
+    // A malformed percent-sequence must not 500 — treat it as an invalid token
+    // so the caller falls through to a clean 401.
+    try { return decodeURIComponent(raw); } catch { return raw; }
   }
   return null;
 }
@@ -274,6 +278,9 @@ const server = http.createServer(async (req, res) => {
     return send(res, err.status || 500, { error: { message: err.message } });
   }
 });
+
+// Refuse to boot on default secrets outside demo mode (clean exit, not a crash).
+try { assertSecureConfig(); } catch (e) { console.error(`[gateway] ${e.message}`); process.exit(1); }
 
 server.listen(config.port, config.host, () => {
   console.log(`[gateway] listening on http://${config.host}:${config.port}`);

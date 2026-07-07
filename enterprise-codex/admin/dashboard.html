@@ -33,7 +33,7 @@
   <div class="card login">
     <h1>Codex Platform</h1>
     <p class="muted">Manager Console — sign in with your company account</p>
-    <p class="muted" style="font-size:12px">Demo stands in for Feishu SSO. Managers: alice@corp.com or grace@corp.com. Employees (e.g. bob@corp.com) are denied.</p>
+    <p class="muted" style="font-size:12px">Only managers may sign in; regular employees are denied. (Demo stands in for Feishu SSO.)</p>
     <input id="loginEmail" placeholder="you@corp.com" style="width:100%; margin:8px 0" onkeydown="if(event.key==='Enter')doLogin()">
     <button class="primary" style="width:100%" onclick="doLogin()">🔐 Login with Feishu</button>
     <p id="loginErr" class="err"></p>

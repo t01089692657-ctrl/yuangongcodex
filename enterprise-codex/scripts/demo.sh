@@ -13,6 +13,9 @@ export UPSTREAM_API_KEY="mock-upstream-key"
 export FEISHU_WEBHOOK_SECRET="feishu-dev-secret"
 export SSO_SHARED_SECRET="sso-dev-secret"
 export ADMIN_TOKEN="admin-dev-token"
+export ADMIN_SESSION_SECRET="admin-session-dev-secret"
+export DEMO_MODE="true"        # enable the mock Feishu login for the demo
+export COOKIE_SECURE="false"   # demo runs over http://127.0.0.1
 export GATEWAY_PORT="8080"
 GW="http://127.0.0.1:8080"
 rm -rf "$DATA_DIR"; mkdir -p "$DATA_DIR"
