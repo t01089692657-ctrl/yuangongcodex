@@ -10,6 +10,13 @@ import { syncSkills } from './skills-sync.js';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const b64u = (b) => Buffer.from(b).toString('base64url');
 
+// Only a conventional env-var name may be used for the key, and never a
+// process-hijacking one (dynamic linker, NODE_OPTIONS, BASH_ENV, PATH, ...), so
+// a hostile gateway can't smuggle a dangerous name via env_key. Applied where we
+// write config.toml AND where we spawn Codex, so the two always agree.
+const UNSAFE_ENV = new Set(['NODE_OPTIONS', 'BASH_ENV', 'ENV', 'PATH', 'PYTHONPATH', 'PYTHONSTARTUP', 'PERL5LIB', 'RUBYOPT', 'RUBYLIB', 'GEM_PATH', 'PROMPT_COMMAND', 'IFS', 'SHELLOPTS', 'BASHOPTS']);
+export const safeEnvName = (n) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(n) && !/^(LD_|DYLD_)/.test(n) && !UNSAFE_ENV.has(n) ? n : 'MYCOMPANY_CODEX_KEY');
+
 // --- Auth: real Feishu OAuth via the gateway (PKCE link+poll) ---------
 // openBrowser(url) navigates the user's browser to `url`. In the desktop app
 // that's shell.openExternal; in tests it's a fetch that follows the redirects.
@@ -71,7 +78,7 @@ export async function setupCodex({ prov, gatewayUrl, codexHome, clientDir, onSta
     baseUrl: prov.base_url,
     apiKey: prov.api_key,
     model: prov.model,
-    envKey: prov.env_key || 'MYCOMPANY_CODEX_KEY',
+    envKey: safeEnvName(prov.env_key || 'MYCOMPANY_CODEX_KEY'), // config.toml + launch env agree, and can't be a dangerous var
     mcpServers: skills.mcpServers,
   });
   return { skills, paths };
@@ -80,7 +87,7 @@ export async function setupCodex({ prov, gatewayUrl, codexHome, clientDir, onSta
 // --- Launch Codex (or verify wiring when no binary is present) ---------
 export function launchCodex({ codexBin, codexHome, envKey, apiKey, extraArgs = [], stdio = 'inherit' }) {
   if (!codexBin || !fs.existsSync(codexBin)) throw new Error('bundled Codex binary not found (set CODEX_BIN)');
-  const env = { ...process.env, CODEX_HOME: codexHome, [envKey]: apiKey };
+  const env = { ...process.env, CODEX_HOME: codexHome, [safeEnvName(envKey)]: apiKey };
   return spawn(codexBin, extraArgs, { env, stdio });
 }
 

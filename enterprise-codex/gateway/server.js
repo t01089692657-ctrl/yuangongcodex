@@ -327,7 +327,8 @@ const server = http.createServer(async (req, res) => {
     if (p === '/admin/activity' && req.method === 'GET') {
       requireManager(req);
       const email = url.searchParams.get('email');
-      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || '50')));
+      const n = Number(url.searchParams.get('limit'));
+      const limit = Number.isFinite(n) ? Math.min(200, Math.max(1, n)) : 50; // bad ?limit= -> default, not empty
       return send(res, 200, { capture: config.activityCapture, activity: store.recentActivity({ email, limit }) });
     }
     if (p === '/admin/revoke' && req.method === 'POST') {

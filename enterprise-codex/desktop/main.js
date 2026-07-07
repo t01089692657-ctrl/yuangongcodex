@@ -82,7 +82,8 @@ ipcMain.handle('start-terminal', (_e, { cols = 80, rows = 24 } = {}) => {
   killPty();
   ptyProc = pty.spawn(s.codexBin, [], {
     name: 'xterm-color', cols, rows, cwd: app.getPath('home'),
-    env: { ...process.env, CODEX_HOME: s.codexHome, [paths.envKey]: prov.api_key, TERM: 'xterm-256color' },
+    // safeEnvName: a hostile gateway must not be able to set NODE_OPTIONS/LD_PRELOAD/etc.
+    env: { ...process.env, CODEX_HOME: s.codexHome, [safeEnvName(paths.envKey)]: prov.api_key, TERM: 'xterm-256color' },
   });
   ptyProc.onData((d) => win?.webContents.send('pty-data', d));
   ptyProc.onExit(({ exitCode }) => { ptyProc = null; win?.webContents.send('pty-exit', exitCode); });
@@ -105,14 +106,18 @@ ipcMain.handle('launch-external', async () => {
 // Single-quote every interpolated value so $, backticks, etc. can't be shell-
 // interpreted (defense-in-depth even though values are trusted).
 const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
-const safeEnvName = (n) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(n) ? n : 'MYCOMPANY_CODEX_KEY');
+// Accept only a conventional env-var name that is NOT a process-hijacking var
+// (dynamic linker, NODE_OPTIONS, BASH_ENV, PATH, ...). Anything else -> the
+// default, so a hostile gateway's env_key can't smuggle in a dangerous name.
+const UNSAFE_ENV = new Set(['NODE_OPTIONS', 'BASH_ENV', 'ENV', 'PATH', 'PYTHONPATH', 'PYTHONSTARTUP', 'PERL5LIB', 'RUBYOPT', 'RUBYLIB', 'GEM_PATH', 'PROMPT_COMMAND', 'IFS', 'SHELLOPTS', 'BASHOPTS']);
+const safeEnvName = (n) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(n) && !/^(LD_|DYLD_)/.test(n) && !UNSAFE_ENV.has(n) ? n : 'MYCOMPANY_CODEX_KEY');
 function launchInTerminal({ codexBin, codexHome, envKey, apiKey }) {
   if (process.platform === 'darwin') {
     const script = path.join(app.getPath('userData'), 'launch-codex.command');
     fs.writeFileSync(script, `#!/bin/bash\nexport CODEX_HOME=${shq(codexHome)}\nexport ${safeEnvName(envKey)}=${shq(apiKey)}\nexec ${shq(codexBin)}\n`, { mode: 0o700 });
     spawn('open', ['-a', 'Terminal', script], { detached: true, stdio: 'ignore' }).unref();
   } else {
-    spawn(codexBin, [], { env: { ...process.env, CODEX_HOME: codexHome, [envKey]: apiKey }, detached: true, stdio: 'ignore' }).unref();
+    spawn(codexBin, [], { env: { ...process.env, CODEX_HOME: codexHome, [safeEnvName(envKey)]: apiKey }, detached: true, stdio: 'ignore' }).unref();
   }
 }
 

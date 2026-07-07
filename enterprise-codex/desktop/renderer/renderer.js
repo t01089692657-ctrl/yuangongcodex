@@ -25,6 +25,11 @@ $('saveSettings').onclick = async () => {
 
 let term = null, fit = null, resizeHandler = null;
 
+// Register the pty->renderer listeners ONCE (they route to the current term).
+// Doing this per-login would stack duplicate listeners and garble output.
+window.api.onPtyData((d) => { if (term) term.write(d); });
+window.api.onPtyExit((code) => { if (term) term.write(`\r\n\x1b[90m[Codex exited: ${code}]\x1b[0m\r\n`); $('statusPill').textContent = 'exited'; });
+
 $('loginBtn').onclick = async () => {
   $('loginBtn').disabled = true;
   try {
@@ -63,9 +68,7 @@ async function startTerminal() {
   }
 
   $('statusPill').textContent = 'Codex running';
-  term.onData((d) => window.api.ptyInput(d));
-  window.api.onPtyData((d) => term.write(d));
-  window.api.onPtyExit((code) => { term?.write(`\r\n\x1b[90m[Codex exited: ${code}]\x1b[0m\r\n`); $('statusPill').textContent = 'exited'; });
+  term.onData((d) => window.api.ptyInput(d)); // per-terminal, disposed on logout
   term.focus();
 
   resizeHandler = () => { try { fit.fit(); window.api.ptyResize({ cols: term.cols, rows: term.rows }); } catch { /* not mounted */ } };
