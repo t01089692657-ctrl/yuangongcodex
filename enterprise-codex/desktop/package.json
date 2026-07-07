@@ -1,0 +1,31 @@
+{
+  "name": "codex-desktop",
+  "productName": "Company Codex",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "main.js",
+  "description": "Desktop app: Feishu SSO -> provision -> launch the bundled Codex.",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac",
+    "dist:all": "electron-builder -mwl"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.yourco.codex",
+    "productName": "Company Codex",
+    "files": ["main.js", "preload.cjs", "renderer/**/*"],
+    "extraResources": [
+      { "from": "../client", "to": "app-src/client" },
+      { "from": "../skills", "to": "app-src/skills" },
+      { "from": "vendor/codex", "to": "codex", "filter": ["**/*"] }
+    ],
+    "mac": { "target": ["dmg"], "category": "public.app-category.developer-tools" },
+    "win": { "target": ["nsis"] },
+    "linux": { "target": ["AppImage"] }
+  }
+}

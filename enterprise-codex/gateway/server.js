@@ -9,6 +9,7 @@ import { config, assertSecureConfig } from './config.js';
 import { Store } from './store.js';
 import { issueKeyForEmployee, resolveKey, offboardEmployee, httpError, safeEqual, verifySsoAssertion, signSsoAssertion, signSession, verifySession } from './auth.js';
 import { proxyRequest } from './proxy.js';
+import { feishuConfigured, signState, verifyState, buildAuthorizeUrl, exchangeCode, fetchUserInfo, createPending, resolvePending, claimPending } from './feishu.js';
 
 const store = new Store(config.dataDir, config.seedFile);
 
@@ -59,6 +60,40 @@ function requireManager(req) {
   if (!emp || emp.status !== 'active') throw httpError(401, 'session revoked');
   if (!emp.isAdmin) throw httpError(403, 'manager role required'); // live re-check
   return { email: claims.email, name: emp.name, role: emp.role || 'manager', via: 'session' };
+}
+
+// Build the employee provisioning payload (issues a fresh scoped key). Shared
+// by the HMAC-assertion /auth/login and the real Feishu OAuth callback.
+function provisionEmployee(email) {
+  const { key, expiresAt } = issueKeyForEmployee(store, email, config, { label: 'sso' });
+  const emp = store.getEmployee(email);
+  return {
+    api_key: key,
+    base_url: `${config.publicUrl}/v1`,
+    model: config.defaultModel,
+    wire_api: 'responses',
+    env_key: 'MYCOMPANY_CODEX_KEY',
+    expires_at: expiresAt,
+    employee: { email: email.toLowerCase(), name: emp.name, role: emp.role },
+  };
+}
+
+// Set the manager session cookie (used by the Feishu callback's redirect flow).
+function setManagerCookie(res, email, sameSite = 'Strict') {
+  const emp = store.getEmployee(email);
+  const profile = { email: String(email).toLowerCase(), name: emp.name, role: emp.role || 'manager' };
+  const token = signSession(profile, config.adminSessionSecret, config.adminSessionTtlSeconds);
+  const flags = ['HttpOnly', 'Path=/', `SameSite=${sameSite}`, `Max-Age=${config.adminSessionTtlSeconds}`];
+  if (config.cookieSecure) flags.push('Secure');
+  res.setHeader('Set-Cookie', `mgr_session=${encodeURIComponent(token)}; ${flags.join('; ')}`);
+  return profile;
+}
+
+function htmlPage(res, status, title, body) {
+  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
+  res.end(`<!doctype html><meta charset=utf-8><title>${title}</title>` +
+    `<div style="font:16px system-ui;max-width:520px;margin:16vh auto;text-align:center;color:#222">` +
+    `<h2>${title}</h2><p style="color:#666">${body}</p></div>`);
 }
 
 // Issue a manager session cookie for a verified manager identity.
@@ -164,17 +199,61 @@ const server = http.createServer(async (req, res) => {
     if (p === '/auth/login' && req.method === 'POST') {
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
       const { email } = verifySsoAssertion(body.assertion, config.ssoSharedSecret);
-      const { key, expiresAt } = issueKeyForEmployee(store, email, config, { label: body.provider || 'sso' });
+      return send(res, 200, provisionEmployee(email));
+    }
+
+    // 1b) Real Feishu / Lark OAuth. The desktop client opens /auth/feishu/start
+    //     in the browser (PKCE link+poll); the manager console uses it directly.
+    if (p === '/auth/feishu/start' && req.method === 'GET') {
+      if (!feishuConfigured()) return send(res, 503, { error: 'Feishu SSO not configured (set FEISHU_APP_ID/FEISHU_APP_SECRET)' });
+      const intent = url.searchParams.get('intent') === 'manager' ? 'manager' : 'employee';
+      const stateObj = { intent, nonce: crypto.randomBytes(9).toString('base64url') };
+      if (intent === 'employee') {
+        const link = url.searchParams.get('link');
+        const challenge = url.searchParams.get('challenge');
+        if (!link || !challenge) return send(res, 400, { error: 'employee login requires link + challenge (PKCE)' });
+        stateObj.link = link;
+        createPending(link, challenge);
+      }
+      // Demo only: forward the chosen account to mock-feishu so the flow is
+      // non-interactive. Real Feishu shows its own login and ignores this.
+      const extra = {};
+      if (config.demoMode && url.searchParams.get('demo_email')) extra.email = url.searchParams.get('demo_email');
+      res.writeHead(302, { Location: buildAuthorizeUrl(signState(stateObj), extra) });
+      return res.end();
+    }
+    if (p === '/auth/feishu/callback' && req.method === 'GET') {
+      if (!feishuConfigured()) return send(res, 503, { error: 'Feishu SSO not configured' });
+      const st = verifyState(url.searchParams.get('state'));
+      const code = url.searchParams.get('code');
+      if (!code) return htmlPage(res, 400, 'Login failed', 'Missing authorization code.');
+      const token = await exchangeCode(code);
+      const { email } = await fetchUserInfo(token);
       const emp = store.getEmployee(email);
-      return send(res, 200, {
-        api_key: key,
-        base_url: `${config.publicUrl}/v1`,
-        model: config.defaultModel,
-        wire_api: 'responses',
-        env_key: 'MYCOMPANY_CODEX_KEY',
-        expires_at: expiresAt,
-        employee: { email: email.toLowerCase(), name: emp.name, role: emp.role },
-      });
+
+      if (st.intent === 'manager') {
+        if (!emp || emp.status !== 'active' || !emp.isAdmin) return htmlPage(res, 403, 'Access denied', `${email} is not a manager.`);
+        setManagerCookie(res, email, 'Lax'); // Lax: cookie must survive the OAuth top-level redirect
+        res.writeHead(302, { Location: '/' });
+        return res.end();
+      }
+      // employee intent -> stash the provisioning result for the desktop app to poll
+      if (!emp || emp.status !== 'active') {
+        resolvePending(st.link, { error: `${email} is not an active employee` }, 'error');
+        return htmlPage(res, 403, 'Access denied', `${email} is not an active employee. Contact IT.`);
+      }
+      resolvePending(st.link, provisionEmployee(email), 'done');
+      return htmlPage(res, 200, '登录成功 / Signed in', 'You can close this window and return to the Codex app.');
+    }
+    if (p === '/auth/feishu/poll' && req.method === 'GET') {
+      const link = url.searchParams.get('link');
+      const verifier = url.searchParams.get('verifier');
+      if (!link || !verifier) return send(res, 400, { error: 'link + verifier required' });
+      const r = claimPending(link, verifier);
+      if (r.status === 'pending') return send(res, 202, { status: 'pending' });
+      if (r.status === 'unknown') return send(res, 404, { status: 'unknown' });
+      if (r.status === 'error') return send(res, 400, { status: 'error', error: r.error || r.result?.error });
+      return send(res, 200, { status: 'done', ...r.result });
     }
 
     // 2) Codex-facing proxy. Codex POSTs /v1/responses (wire_api=responses) and

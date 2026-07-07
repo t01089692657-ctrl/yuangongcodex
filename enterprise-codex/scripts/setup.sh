@@ -45,6 +45,13 @@ DEMO_MODE=${DEMO}
 # COOKIE_SECURE: set true when serving over HTTPS
 COOKIE_SECURE=${SECURE}
 ADMIN_SESSION_TTL_SECONDS=3600
+
+# --- Feishu / Lark SSO (fill these to enable real SSO login) ---
+# Create an app at open.feishu.cn, grant the email scope, and register the
+# redirect URI below. Leave blank to use only the offline mock/demo login.
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+FEISHU_REDIRECT_URI=http://${LAN_IP}:8080/auth/feishu/callback
 EOF
 
 chmod 600 .env

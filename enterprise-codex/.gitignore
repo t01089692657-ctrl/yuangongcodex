@@ -4,4 +4,8 @@ node_modules/
 gateway/data/store.json
 gateway/data/store.json.tmp
 gateway/data/demo/
+gateway/data/demo-feishu/
 gateway/data/_check/
+# desktop app build output + bundled binary (drop your own codex into vendor/)
+desktop/dist/
+desktop/vendor/

@@ -8,8 +8,10 @@
   "scripts": {
     "gateway": "node gateway/server.js",
     "mock": "node mock-upstream/server.js",
+    "mock-feishu": "node mock-feishu/server.js",
     "client": "node client/launcher.js",
     "mcp-smoke": "node tools/mcp-smoke.js",
-    "demo": "bash scripts/demo.sh"
+    "demo": "bash scripts/demo.sh",
+    "demo-feishu": "bash scripts/demo-feishu.sh"
   }
 }

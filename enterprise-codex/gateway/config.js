@@ -74,6 +74,22 @@ export const config = {
   ssoSharedSecret: env('SSO_SHARED_SECRET', 'sso-dev-secret'),
   ssoAssertionTtlSeconds: Number(env('SSO_ASSERTION_TTL_SECONDS', '120')),
 
+  // --- Feishu / Lark OAuth (real SSO) ---
+  // App credentials live ONLY here on the gateway, never in the desktop client.
+  // All endpoints are overridable so the offline demo can point at mock-feishu.
+  feishu: {
+    appId: env('FEISHU_APP_ID', ''),
+    appSecret: env('FEISHU_APP_SECRET', ''),
+    authorizeUrl: env('FEISHU_AUTHORIZE_URL', 'https://accounts.feishu.cn/open-apis/authen/v1/authorize'),
+    tokenUrl: env('FEISHU_TOKEN_URL', 'https://open.feishu.cn/open-apis/authen/v2/oauth/token'),
+    userInfoUrl: env('FEISHU_USERINFO_URL', 'https://open.feishu.cn/open-apis/authen/v1/user_info'),
+    scope: env('FEISHU_OAUTH_SCOPE', 'contact:user.employee_id:readonly contact:user.email:readonly'),
+    // Where Feishu redirects back; must be registered in the Feishu app console.
+    redirectUri: env('FEISHU_REDIRECT_URI', `${env('GATEWAY_PUBLIC_URL', 'http://127.0.0.1:8080')}/auth/feishu/callback`),
+  },
+  // TTL for a pending desktop-login handoff (link+poll) and the OAuth state.
+  oauthStateTtlSeconds: Number(env('OAUTH_STATE_TTL_SECONDS', '600')),
+
   // Issued key format + optional expiry (0 = non-expiring opaque key,
   // revoked instantly by flipping active=false in the store).
   keyPrefix: env('KEY_PREFIX', 'sk-comp-'),
