@@ -236,9 +236,13 @@ function serveSkillFile(res, rel) {
 
 // --- router -----------------------------------------------------------
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const p = url.pathname;
   try {
+    // A malformed Host/URL makes new URL() throw; return a clean 400 rather than
+    // an unhandled rejection that would hang the socket for the request timeout.
+    let url;
+    try { url = new URL(req.url, `http://${req.headers.host || 'localhost'}`); }
+    catch { return send(res, 400, { error: { message: 'bad request line or host' } }); }
+    const p = url.pathname;
     // Health
     if (p === '/healthz') return send(res, 200, { ok: true });
 
@@ -378,8 +382,9 @@ const server = http.createServer(async (req, res) => {
     if (p === '/admin/activity' && req.method === 'GET') {
       requireManager(req);
       const email = url.searchParams.get('email');
-      const n = Number(url.searchParams.get('limit'));
-      const limit = Number.isFinite(n) ? Math.min(200, Math.max(1, n)) : 50; // bad ?limit= -> default, not empty
+      const rawLimit = url.searchParams.get('limit');
+      const n = Number(rawLimit);
+      const limit = (rawLimit && Number.isFinite(n)) ? Math.min(200, Math.max(1, n)) : 50; // absent/bad -> default 50
       return send(res, 200, { capture: config.activityCapture, activity: store.recentActivity({ email, limit }) });
     }
     if (p === '/admin/revoke' && req.method === 'POST') {

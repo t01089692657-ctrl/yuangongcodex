@@ -12,7 +12,9 @@ if [ -f .env ]; then
 fi
 
 gen() { openssl rand -hex 32; }
-LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo 127.0.0.1)"
+# Try common macOS interfaces (en0 wired, en1 Wi-Fi), then Linux, then localhost.
+LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
+LAN_IP="${LAN_IP:-127.0.0.1}"   # never leave it empty (would yield http://:8080)
 
 if [ "$MODE" = "prod" ]; then DEMO=false; SECURE=true; else DEMO=true; SECURE=false; fi
 
