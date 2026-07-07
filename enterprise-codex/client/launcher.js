@@ -28,8 +28,11 @@ const log = (m) => console.log(m);
 function makeOpener() {
   if (flag('headless-open')) return async (url) => { await fetch(url).catch(() => {}); };
   return async (url) => {
-    const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
-    const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
+    // Pass the URL as a lone argv (no shell), so shell metacharacters can't be
+    // interpreted. On Windows use rundll32 instead of `cmd /c start`.
+    const [cmd, args] = process.platform === 'darwin' ? ['open', [url]]
+      : process.platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
+      : ['xdg-open', [url]];
     spawn(cmd, args, { stdio: 'ignore', detached: true }).unref();
   };
 }

@@ -74,8 +74,11 @@ export async function fetchUserInfo(userAccessToken) {
   if (!r.ok || (j.code !== undefined && j.code !== 0)) {
     throw httpError(502, `Feishu user_info failed: ${j.msg || r.status}`);
   }
-  const email = data.enterprise_email || data.email;
-  if (!email) throw httpError(403, 'Feishu account has no (enterprise) email — grant the email scope');
+  // Prefer the corporate mailbox (enterprise_email). data.email can be a
+  // user-set personal address on some tenants; set FEISHU_REQUIRE_ENTERPRISE_EMAIL
+  // to reject accounts without a corporate mailbox (recommended).
+  const email = data.enterprise_email || (process.env.FEISHU_REQUIRE_ENTERPRISE_EMAIL === 'true' ? '' : data.email);
+  if (!email) throw httpError(403, 'Feishu account has no enterprise email — grant the email scope (or unset FEISHU_REQUIRE_ENTERPRISE_EMAIL)');
   return { email: String(email).toLowerCase(), name: data.name || data.en_name || email };
 }
 
@@ -87,13 +90,27 @@ function sweep() {
   for (const [k, v] of pending) if (v.exp < now) pending.delete(k);
 }
 
+// REFUSE TO OVERWRITE: the client-chosen `link` is not secret (it rides in the
+// decodable OAuth state), so a second /start for the same link must NOT be able
+// to rebind the PKCE challenge. The victim registers first with a random link;
+// any later call for that link is a no-op, so the attacker can never swap in
+// their own challenge to claim the victim's key. Returns false if not created.
 export function createPending(link, challenge) {
   sweep();
+  if (pending.has(link)) return false;
   pending.set(link, { status: 'pending', result: null, challenge, exp: Date.now() + config.oauthStateTtlSeconds * 1000 });
+  return true;
 }
-export function resolvePending(link, result, status = 'done') {
+// Only resolve a still-pending entry, and only when the callback's (HMAC-signed)
+// state challenge matches the one registered at /start — so a rogue callback for
+// someone else's link cannot clobber it or rebind the challenge.
+export function resolvePending(link, result, stateChallenge, status = 'done') {
   const e = pending.get(link);
-  if (e) { e.status = status; e.result = result; }
+  if (!e || e.status !== 'pending') return false;
+  if (!stateChallenge || stateChallenge !== e.challenge) return false;
+  e.status = status;
+  e.result = result;
+  return true;
 }
 // Claim the result once, proving knowledge of the PKCE verifier.
 export function claimPending(link, verifier) {

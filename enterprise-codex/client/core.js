@@ -27,12 +27,18 @@ export async function feishuLogin({ gatewayUrl, openBrowser, onStatus = () => {}
   onStatus('opening browser for Feishu sign-in…');
   await openBrowser(start.toString());
 
-  const pollUrl = `${gatewayUrl}/auth/feishu/poll?link=${encodeURIComponent(link)}&verifier=${encodeURIComponent(verifier)}`;
   const deadline = Date.now() + pollTimeoutMs;
   onStatus('waiting for you to finish sign-in…');
   while (Date.now() < deadline) {
     let r;
-    try { r = await fetch(pollUrl); } catch { await sleep(1500); continue; }
+    // POST so the PKCE verifier never lands in a URL / access log.
+    try {
+      r = await fetch(`${gatewayUrl}/auth/feishu/poll`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ link, verifier }),
+      });
+    } catch { await sleep(1500); continue; }
     if (r.status === 202 || r.status === 404) { await sleep(1500); continue; }
     const j = await r.json().catch(() => ({}));
     if (r.ok && j.status === 'done') return j;              // provisioning result

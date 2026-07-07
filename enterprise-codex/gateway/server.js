@@ -213,7 +213,8 @@ const server = http.createServer(async (req, res) => {
         const challenge = url.searchParams.get('challenge');
         if (!link || !challenge) return send(res, 400, { error: 'employee login requires link + challenge (PKCE)' });
         stateObj.link = link;
-        createPending(link, challenge);
+        stateObj.challenge = challenge; // HMAC-signed so it can't be rebound later
+        createPending(link, challenge); // no-op if this link is already pending
       }
       // Demo only: forward the chosen account to mock-feishu so the flow is
       // non-interactive. Real Feishu shows its own login and ignores this.
@@ -237,17 +238,21 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(302, { Location: '/' });
         return res.end();
       }
-      // employee intent -> stash the provisioning result for the desktop app to poll
+      // employee intent -> stash the provisioning result for the desktop app to
+      // poll. resolvePending binds to the HMAC-signed challenge from the state,
+      // so a rogue callback for a known link can't rebind or clobber it.
       if (!emp || emp.status !== 'active') {
-        resolvePending(st.link, { error: `${email} is not an active employee` }, 'error');
+        resolvePending(st.link, { error: `${email} is not an active employee` }, st.challenge, 'error');
         return htmlPage(res, 403, 'Access denied', `${email} is not an active employee. Contact IT.`);
       }
-      resolvePending(st.link, provisionEmployee(email), 'done');
+      resolvePending(st.link, provisionEmployee(email), st.challenge, 'done');
       return htmlPage(res, 200, '登录成功 / Signed in', 'You can close this window and return to the Codex app.');
     }
-    if (p === '/auth/feishu/poll' && req.method === 'GET') {
-      const link = url.searchParams.get('link');
-      const verifier = url.searchParams.get('verifier');
+    // Poll is POST so the PKCE verifier (the login secret) stays out of URLs/logs.
+    if (p === '/auth/feishu/poll' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const link = body.link;
+      const verifier = body.verifier;
       if (!link || !verifier) return send(res, 400, { error: 'link + verifier required' });
       const r = claimPending(link, verifier);
       if (r.status === 'pending') return send(res, 202, { status: 'pending' });
