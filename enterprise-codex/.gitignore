@@ -6,6 +6,7 @@ gateway/data/store.json.tmp
 gateway/data/demo/
 gateway/data/demo-feishu/
 gateway/data/_check/
-# desktop app build output + bundled binary (drop your own codex into vendor/)
+# desktop app build output + bundled binary (drop your own codex into vendor/codex/)
 desktop/dist/
-desktop/vendor/
+desktop/vendor/codex/codex
+desktop/vendor/codex/codex.exe
