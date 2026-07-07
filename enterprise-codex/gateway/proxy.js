@@ -30,8 +30,8 @@ function usageFromSSE(text) {
 }
 
 // pathSuffix is everything after the gateway's /v1 (e.g. "/responses").
-export async function proxyRequest({ pathSuffix, method, headers, bodyBuffer, identity, store, res }) {
-  const url = config.upstreamBaseUrl.replace(/\/$/, '') + pathSuffix;
+export async function proxyRequest({ pathSuffix, search = '', method, headers, bodyBuffer, identity, store, res }) {
+  const url = config.upstreamBaseUrl.replace(/\/$/, '') + pathSuffix + (search || '');
 
   const upstreamHeaders = {
     'content-type': headers['content-type'] || 'application/json',
@@ -72,19 +72,25 @@ export async function proxyRequest({ pathSuffix, method, headers, bodyBuffer, id
   };
 
   if (ct.includes('text/event-stream') && upstream.body) {
-    // Stream to the client while teeing the text for usage extraction.
+    // Stream to the client while teeing the text for usage extraction. A
+    // mid-stream upstream reset must not crash the gateway, so guard the loop
+    // and honor client backpressure instead of buffering unboundedly.
     res.writeHead(upstream.status, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     let buffered = '';
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      buffered += chunk;
-      res.write(value);
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        if (!res.write(value)) await new Promise((r) => res.once('drain', r));
+      }
+    } catch (err) {
+      console.error('[proxy] stream error:', err?.message || err);
+    } finally {
+      try { res.end(); } catch { /* client gone */ }
     }
-    res.end();
     meter(usageFromSSE(buffered), pathSuffix);
     return;
   }

@@ -28,6 +28,14 @@ export const config = {
 
   // Shared secret to verify the Feishu/Lark offboarding webhook.
   feishuWebhookSecret: env('FEISHU_WEBHOOK_SECRET', 'feishu-dev-secret'),
+  webhookMaxSkewSeconds: Number(env('WEBHOOK_MAX_SKEW_SECONDS', '300')),
+
+  // Shared secret used to sign/verify the SSO assertion presented at login.
+  // In production this is replaced by verifying a real OIDC id_token via the
+  // IdP's JWKS (no shared secret); the demo HMAC-signs a short-lived assertion
+  // that the trusted first-party SSO frontend produces after real auth.
+  ssoSharedSecret: env('SSO_SHARED_SECRET', 'sso-dev-secret'),
+  ssoAssertionTtlSeconds: Number(env('SSO_ASSERTION_TTL_SECONDS', '120')),
 
   // Issued key format + optional expiry (0 = non-expiring opaque key,
   // revoked instantly by flipping active=false in the store).

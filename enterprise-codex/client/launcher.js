@@ -8,6 +8,7 @@
 // env var and spawn it. With --simulate (or no bundled binary) we instead make
 // one real request through the gateway to prove the wiring end-to-end.
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -26,17 +27,27 @@ const flag = (name) => process.argv.includes(`--${name}`);
 
 // --- SSO -------------------------------------------------------------
 // In production, drive the IdP's OIDC/authorization-code flow (Feishu/Lark,
-// WeCom, Okta...) and return the *verified* email claim. Here 'mock' reads a
-// flag so the whole pipeline is testable offline.
-async function ssoAuthenticate(provider, gatewayUrl) {
+// WeCom, Okta...), then hand the gateway the resulting id_token as the
+// `assertion`. Here 'mock' HMAC-signs a short-lived assertion the same way a
+// trusted first-party SSO frontend would after real auth, so the whole pipeline
+// is testable offline AND the gateway still verifies a signature (no bare-email
+// impersonation). The signing secret would NOT live in a real client — this
+// stands in for the SSO frontend that mints the token server-side.
+function mockSsoAssertion(email) {
+  const secret = process.env.SSO_SHARED_SECRET || 'sso-dev-secret';
+  const payload = Buffer.from(JSON.stringify({ email: email.toLowerCase(), exp: Math.floor(Date.now() / 1000) + 120 })).toString('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  return `${payload}.${sig}`;
+}
+async function ssoAuthenticate(provider) {
   if (provider === 'mock') {
     const email = arg('email', process.env.EMPLOYEE_EMAIL);
     if (!email) throw new Error('mock SSO needs --email <addr> (stands in for the verified OIDC claim)');
-    return { email };
+    return { email, assertion: mockSsoAssertion(email) };
   }
   if (provider === 'feishu') {
-    // TODO: open browser to Feishu authorize URL, exchange code, verify id_token,
-    // read the email claim. Left as an integration point.
+    // TODO: open browser to Feishu authorize URL, exchange code, obtain the
+    // id_token, and pass it as `assertion` (gateway verifies it via JWKS).
     throw new Error('feishu SSO not wired in this demo — use --provider mock, or implement the OIDC exchange here');
   }
   throw new Error(`unknown SSO provider: ${provider}`);
@@ -52,14 +63,15 @@ async function main() {
   console.log(`gateway=${gatewayUrl} provider=${provider} CODEX_HOME=${codexHome}`);
 
   // 1) SSO
-  const { email } = await ssoAuthenticate(provider, gatewayUrl);
+  const { email, assertion } = await ssoAuthenticate(provider);
   console.log(`[1/4] SSO ok: ${email}`);
 
-  // 2) Provision a scoped key from the gateway
+  // 2) Provision a scoped key from the gateway (present the signed assertion,
+  //    NOT a bare email — the gateway derives identity from the verified token)
   const loginRes = await fetch(`${gatewayUrl}/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, provider }),
+    body: JSON.stringify({ assertion, provider }),
   });
   if (!loginRes.ok) throw new Error(`login failed ${loginRes.status}: ${await loginRes.text()}`);
   const prov = await loginRes.json();
@@ -83,10 +95,10 @@ async function main() {
 
   if (codexBin && fs.existsSync(codexBin) && !flag('simulate')) {
     console.log(`[4/4] launching bundled Codex: ${codexBin}`);
-    const child = spawn(codexBin, process.argv.slice(process.argv.indexOf('--') + 1).filter((a) => a !== '--'), {
-      env: childEnv,
-      stdio: 'inherit',
-    });
+    // Forward only args placed after an explicit `--`; none if absent.
+    const sep = process.argv.indexOf('--');
+    const passthrough = sep >= 0 ? process.argv.slice(sep + 1) : [];
+    const child = spawn(codexBin, passthrough, { env: childEnv, stdio: 'inherit' });
     child.on('exit', (code) => process.exit(code ?? 0));
     return;
   }

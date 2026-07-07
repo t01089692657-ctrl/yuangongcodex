@@ -21,9 +21,18 @@ async function getText(url, token) {
 export async function syncSkills({ gatewayUrl, apiKey, codexHome, clientDir }) {
   const manifest = await getJson(`${gatewayUrl}/skills/manifest`, apiKey);
   const written = [];
+  const root = path.resolve(codexHome);
   for (const f of manifest.files) {
+    // Contain the write inside CODEX_HOME: a malicious/compromised gateway must
+    // not be able to write ~/.bashrc, ~/.ssh/authorized_keys, etc. (RCE).
+    if (path.isAbsolute(f.path) || f.path.split(/[\\/]/).includes('..')) {
+      throw new Error(`unsafe skill path rejected: ${f.path}`);
+    }
+    const dest = path.resolve(root, f.path);
+    if (dest !== root && !dest.startsWith(root + path.sep)) {
+      throw new Error(`skill path escapes CODEX_HOME: ${f.path}`);
+    }
     const text = await getText(`${gatewayUrl}/skills/file?path=${encodeURIComponent(f.path)}`, apiKey);
-    const dest = path.join(codexHome, f.path);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.writeFileSync(dest, text);
     written.push(f.path);

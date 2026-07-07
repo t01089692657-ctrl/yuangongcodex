@@ -11,6 +11,7 @@ export SEED_FILE="$ROOT/gateway/data/employees.seed.json"
 export UPSTREAM_BASE_URL="http://127.0.0.1:8091/v1"
 export UPSTREAM_API_KEY="mock-upstream-key"
 export FEISHU_WEBHOOK_SECRET="feishu-dev-secret"
+export SSO_SHARED_SECRET="sso-dev-secret"
 export ADMIN_TOKEN="admin-dev-token"
 export GATEWAY_PORT="8080"
 GW="http://127.0.0.1:8080"
@@ -40,15 +41,18 @@ echo; echo "== admin leaderboard =="
 curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$GW/admin/leaderboard"; echo
 
 echo; echo "== offboarding: prove a live key dies the instant HR marks 离职 =="
-LOGIN=$(curl -s -X POST "$GW/auth/login" -H 'content-type: application/json' -d '{"email":"alice@corp.com","provider":"mock"}')
+ASSERT=$(node -e 'const c=require("crypto");const e="alice@corp.com";const p=Buffer.from(JSON.stringify({email:e,exp:Math.floor(Date.now()/1000)+120})).toString("base64url");process.stdout.write(p+"."+c.createHmac("sha256",process.env.SSO_SHARED_SECRET).update(p).digest("hex"))')
+LOGIN=$(curl -s -X POST "$GW/auth/login" -H 'content-type: application/json' -d "{\"assertion\":\"$ASSERT\",\"provider\":\"mock\"}")
 KEY=$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).api_key))' <<<"$LOGIN")
 echo "alice key: ${KEY:0:16}…"
 echo -n "  request BEFORE offboarding -> HTTP "
 curl -s -o /dev/null -w "%{http_code}\n" -X POST "$GW/v1/responses" -H "Authorization: Bearer $KEY" -H 'content-type: application/json' -d '{"model":"gpt-5-codex","input":"hi"}'
 
-BODY='{"email":"alice@corp.com","status":"离职"}'
-SIG=$(node -e 'const c=require("crypto");process.stdout.write(c.createHmac("sha256",process.env.FEISHU_WEBHOOK_SECRET).update(process.argv[1]).digest("hex"))' "$BODY")
-echo -n "  Feishu webhook -> "; curl -s -X POST "$GW/webhooks/feishu/offboarding" -H "x-signature: $SIG" -H 'content-type: application/json' -d "$BODY"; echo
+# Nested Feishu event shape + timestamped signature (exercises robust parsing + replay guard).
+TS=$(node -e 'process.stdout.write(String(Math.floor(Date.now()/1000)))')
+BODY='{"schema":"2.0","event":{"object":{"email":"alice@corp.com","status":"离职"}}}'
+SIG=$(node -e 'const c=require("crypto");process.stdout.write(c.createHmac("sha256",process.env.FEISHU_WEBHOOK_SECRET).update(process.argv[1]+"."+process.argv[2]).digest("hex"))' "$TS" "$BODY")
+echo -n "  Feishu webhook -> "; curl -s -X POST "$GW/webhooks/feishu/offboarding" -H "x-timestamp: $TS" -H "x-signature: $SIG" -H 'content-type: application/json' -d "$BODY"; echo
 echo -n "  SAME key AFTER offboarding -> HTTP "
 curl -s -o /dev/null -w "%{http_code}\n" -X POST "$GW/v1/responses" -H "Authorization: Bearer $KEY" -H 'content-type: application/json' -d '{"model":"gpt-5-codex","input":"hi"}'
 

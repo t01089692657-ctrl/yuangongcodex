@@ -7,10 +7,14 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { config } from './config.js';
 import { Store } from './store.js';
-import { issueKeyForEmployee, resolveKey, offboardEmployee, httpError } from './auth.js';
+import { issueKeyForEmployee, resolveKey, offboardEmployee, httpError, safeEqual, verifySsoAssertion } from './auth.js';
 import { proxyRequest } from './proxy.js';
 
 const store = new Store(config.dataDir, config.seedFile);
+
+// A stray async error must never take the whole gateway down.
+process.on('unhandledRejection', (e) => console.error('[gateway] unhandledRejection:', e?.message || e));
+process.on('uncaughtException', (e) => console.error('[gateway] uncaughtException:', e?.message || e));
 
 // --- helpers ----------------------------------------------------------
 function send(res, status, obj, headers = {}) {
@@ -30,16 +34,42 @@ function bearer(req) {
   return h.startsWith('Bearer ') ? h.slice(7).trim() : null;
 }
 function requireAdmin(req) {
-  if (bearer(req) !== config.adminToken) throw httpError(401, 'admin auth required');
+  if (!safeEqual(bearer(req), config.adminToken)) throw httpError(401, 'admin auth required');
 }
 
-// Verify Feishu/Lark webhook: HMAC-SHA256(secret, rawBody) in x-signature.
+// Verify Feishu/Lark webhook: HMAC-SHA256(secret, "<timestamp>.<rawBody>") in
+// x-signature, with x-timestamp bound and freshness-checked to stop replay.
 function verifyFeishu(req, rawBody) {
   const sig = req.headers['x-signature'] || '';
-  const expected = crypto.createHmac('sha256', config.feishuWebhookSecret).update(rawBody).digest('hex');
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  const ts = req.headers['x-timestamp'] || '';
+  if (!ts || !/^\d+$/.test(ts)) return false;
+  const skew = Math.abs(Date.now() / 1000 - Number(ts));
+  if (skew > config.webhookMaxSkewSeconds) return false; // stale/replayed
+  const expected = crypto.createHmac('sha256', config.feishuWebhookSecret).update(`${ts}.${rawBody}`).digest('hex');
+  return safeEqual(sig, expected);
+}
+
+// Pull an employee email out of the (varied) Feishu event shapes, falling back
+// to a bounded recursive search for the first email-looking string.
+function extractEmail(obj, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 6) return null;
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === 'string' && /email/i.test(k) && /@/.test(v)) return v;
+  }
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === 'object') { const f = extractEmail(v, depth + 1); if (f) return f; }
+  }
+  return null;
+}
+function extractStatus(obj, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 6) return null;
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === 'string' && /status|state/i.test(k)) return v;
+  }
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === 'object') { const f = extractStatus(v, depth + 1); if (f) return f; }
+  }
+  return null;
 }
 
 // Enumerate distributable skills: global AGENTS.md + prompts/*.md.
@@ -90,13 +120,12 @@ const server = http.createServer(async (req, res) => {
     // Health
     if (p === '/healthz') return send(res, 200, { ok: true });
 
-    // 1) Client login: SSO already verified upstream -> issue a scoped key.
-    //    Body: { email, provider }. In prod, verify an OIDC id_token here and
-    //    take the email from its verified claims instead of trusting the body.
+    // 1) Client login: the client presents a signed SSO assertion (in prod, an
+    //    OIDC id_token). We derive the identity from the VERIFIED assertion, not
+    //    from an untrusted body field, so a bare email cannot mint a key.
     if (p === '/auth/login' && req.method === 'POST') {
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
-      const email = body.email;
-      if (!email) return send(res, 400, { error: 'email required' });
+      const { email } = verifySsoAssertion(body.assertion, config.ssoSharedSecret);
       const { key, expiresAt } = issueKeyForEmployee(store, email, config, { label: body.provider || 'sso' });
       const emp = store.getEmployee(email);
       return send(res, 200, {
@@ -114,8 +143,9 @@ const server = http.createServer(async (req, res) => {
     if (p.startsWith('/v1/') && req.method === 'POST') {
       const identity = resolveKey(store, bearer(req));
       const bodyBuffer = await readBody(req);
-      return proxyRequest({
+      return await proxyRequest({
         pathSuffix: p.slice('/v1'.length), // e.g. /responses
+        search: url.search,
         method: req.method,
         headers: req.headers,
         bodyBuffer,
@@ -153,18 +183,20 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 5) Feishu/Lark offboarding webhook: 离职 status -> instant cutoff.
+    //    Fails CLOSED: only reports success when an employee was actually found
+    //    and offboarded, so a shape mismatch is loud, not a silent no-op.
     if (p === '/webhooks/feishu/offboarding' && req.method === 'POST') {
       const raw = await readBody(req);
-      if (!verifyFeishu(req, raw)) return send(res, 401, { error: 'bad signature' });
+      if (!verifyFeishu(req, raw)) return send(res, 401, { error: 'bad or replayed signature' });
       const body = JSON.parse(raw.toString('utf8') || '{}');
-      // Feishu employee-status events carry the person's email/status.
-      const email = body.email || body.employee?.email;
-      const status = body.status || body.employee?.status;
-      if (status && !['离职', 'resigned', 'terminated', 'offboarded'].includes(status)) {
-        return send(res, 200, { ignored: true, status });
-      }
+      const email = body.email || body.employee?.email || body.event?.object?.email || extractEmail(body);
+      const status = body.status || body.employee?.status || body.event?.object?.status || extractStatus(body);
+      const OFFBOARD = ['离职', '已离职', 'resigned', 'terminated', 'offboarded', 'inactive'];
+      if (status && !OFFBOARD.includes(status)) return send(res, 200, { ignored: true, status });
+      if (!email) return send(res, 422, { error: 'could not resolve employee email from payload' });
       const r = offboardEmployee(store, email);
-      return send(res, 200, { email, offboarded: true, ...r });
+      if (!r.found) return send(res, 404, { error: 'unknown employee', email, offboarded: false });
+      return send(res, 200, { email, offboarded: true, revoked: r.revoked });
     }
 
     // 6) Admin dashboard.
@@ -178,6 +210,8 @@ const server = http.createServer(async (req, res) => {
 
     return send(res, 404, { error: 'not found', path: p });
   } catch (err) {
+    // If a streaming response already sent headers, we can't write a JSON error.
+    if (res.headersSent) { try { res.end(); } catch { /* already closed */ } return; }
     return send(res, err.status || 500, { error: { message: err.message } });
   }
 });
