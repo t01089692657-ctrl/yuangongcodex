@@ -74,11 +74,13 @@ export async function fetchUserInfo(userAccessToken) {
   if (!r.ok || (j.code !== undefined && j.code !== 0)) {
     throw httpError(502, `Feishu user_info failed: ${j.msg || r.status}`);
   }
-  // Prefer the corporate mailbox (enterprise_email). data.email can be a
-  // user-set personal address on some tenants; set FEISHU_REQUIRE_ENTERPRISE_EMAIL
-  // to reject accounts without a corporate mailbox (recommended).
-  const email = data.enterprise_email || (process.env.FEISHU_REQUIRE_ENTERPRISE_EMAIL === 'true' ? '' : data.email);
-  if (!email) throw httpError(403, 'Feishu account has no enterprise email — grant the email scope (or unset FEISHU_REQUIRE_ENTERPRISE_EMAIL)');
+  // Identity comes from the corporate mailbox (enterprise_email) by DEFAULT,
+  // because data.email can be a user-set personal address on some tenants —
+  // trusting it would let a user match themselves to a colleague's identity.
+  // Set FEISHU_REQUIRE_ENTERPRISE_EMAIL=false to also accept data.email.
+  const allowPersonal = process.env.FEISHU_REQUIRE_ENTERPRISE_EMAIL === 'false';
+  const email = data.enterprise_email || (allowPersonal ? data.email : '');
+  if (!email) throw httpError(403, 'Feishu account has no enterprise email — grant the email scope (or set FEISHU_REQUIRE_ENTERPRISE_EMAIL=false to allow personal email)');
   return { email: String(email).toLowerCase(), name: data.name || data.en_name || email };
 }
 

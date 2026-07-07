@@ -68,6 +68,24 @@
       <p class="muted" id="actNote" style="font-size:12px;margin:8px 0 0"></p>
     </div>
     <div class="card">
+      <h3 style="margin-top:0">Upstreams — 中转站 / API pool</h3>
+      <p class="muted" style="font-size:12px;margin-top:0">Add relay (中转站) API keys or account JSON; employees are reverse-proxied across the enabled ones (weighted, unhealthy skipped). Keys are stored on the server and never shown back.</p>
+      <table><thead><tr><th>Name</th><th>Base URL</th><th>Key</th><th>Wt</th><th>Health</th><th>On</th><th></th></tr></thead>
+      <tbody id="upRows"></tbody></table>
+      <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <input id="upName" placeholder="name (relay-A)" size="12">
+        <input id="upBase" placeholder="https://relay.example.com/v1" size="26">
+        <input id="upKey" placeholder="sk-… API key" size="16">
+        <input id="upWeight" value="1" size="3" title="weight">
+        <button class="primary" onclick="addUpstream()">Add</button>
+      </div>
+      <details style="margin-top:10px"><summary class="muted" style="font-size:12px;cursor:pointer">…or paste account JSON (single, array, or {channels:[…]})</summary>
+        <textarea id="upJson" placeholder='{"base_url":"https://relay/v1","api_key":"sk-…"}   or   [ {…}, {…} ]' style="width:100%;height:76px;margin-top:8px;font-family:ui-monospace,monospace"></textarea>
+        <div><button onclick="addUpstreamJson()">Add from JSON</button></div>
+      </details>
+      <span id="upMsg" class="muted"></span>
+    </div>
+    <div class="card">
       <h3 style="margin-top:0">Offboard (instant cutoff)</h3>
       <input id="email" placeholder="employee@corp.com" size="24">
       <button onclick="revoke()">Revoke access</button>
@@ -117,7 +135,8 @@
           <td style="width:180px"><div class="bar" style="width:${Math.round(100*r.totalTokens/max)}%"></div></td>
         </tr>`; }).join('') : '<tr><td colspan="7" class="muted">No usage yet.</td></tr>';
       loadActivity();
-    }catch(e){ if(e.status===401) return show('loginView'); document.getElementById('rows').innerHTML = '<tr><td colspan="7" class="muted">'+e.message+'</td></tr>'; }
+      loadUpstreams();
+    }catch(e){ if(e.status===401) return show('loginView'); document.getElementById('rows').innerHTML = '<tr><td colspan="7" class="muted">'+esc(e.message)+'</td></tr>'; }
   }
   let activityEmail = null;
   const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -151,5 +170,51 @@
       document.getElementById('revmsg').textContent = r.found ? `revoked ${r.revoked} key(s) for ${email} (by ${r.by})` : `no such employee: ${email}`; load();
     }catch(e){ document.getElementById('revmsg').textContent = e.message; }
   }
+
+  // --- Upstream pool (中转站 / API keys) ---
+  const val = (id) => document.getElementById(id).value.trim();
+  const upMsg = (m) => { document.getElementById('upMsg').textContent = m; };
+  async function loadUpstreams(){
+    try{
+      const d = await api('/admin/upstreams');
+      const rows = document.getElementById('upRows');
+      rows.innerHTML = d.upstreams.length ? d.upstreams.map(u => {
+        const hs = u.health?.status || 'unknown';
+        const cls = hs==='ok' ? '' : (hs==='down' ? 'off' : '');
+        return `<tr>
+          <td>${esc(u.name)}</td>
+          <td class="muted" style="max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(u.baseUrl)}</td>
+          <td class="muted">${esc(u.keyMasked)}</td>
+          <td>${u.weight}</td>
+          <td><span class="pill ${cls}">${esc(hs)}</span></td>
+          <td>${u.enabled ? 'yes' : '<span class=muted>no</span>'}</td>
+          <td style="white-space:nowrap">
+            <button class="link" data-up-toggle="${esc(u.id)}" data-up-en="${u.enabled?0:1}">${u.enabled?'disable':'enable'}</button>
+            <button class="link" style="color:var(--danger)" data-up-del="${esc(u.id)}">delete</button>
+          </td></tr>`;
+      }).join('') : `<tr><td colspan="7" class="muted">No pool upstreams. ${d.fallback?('Falling back to configured default: '+esc(d.fallback)):'No default configured — add one so Codex has an upstream.'}</td></tr>`;
+    }catch(e){ if(e.status===401) return show('loginView'); }
+  }
+  async function addUpstream(){
+    const baseUrl = val('upBase'); if(!baseUrl){ upMsg('base URL required'); return; }
+    try{ await api('/admin/upstreams',{ method:'POST', body: JSON.stringify({ name:val('upName'), baseUrl, apiKey:val('upKey'), weight:Number(val('upWeight'))||1 }) });
+      ['upName','upBase','upKey'].forEach(id=>document.getElementById(id).value=''); upMsg('added'); loadUpstreams();
+    }catch(e){ upMsg(e.message); }
+  }
+  async function addUpstreamJson(){
+    const json = val('upJson'); if(!json){ upMsg('paste JSON first'); return; }
+    try{ const r = await api('/admin/upstreams',{ method:'POST', body: JSON.stringify({ json }) });
+      document.getElementById('upJson').value=''; upMsg('added '+r.added.length+' upstream(s)'); loadUpstreams();
+    }catch(e){ upMsg(e.message); }
+  }
+  document.getElementById('upRows').addEventListener('click', async (ev) => {
+    const t = ev.target.closest('[data-up-toggle],[data-up-del]'); if(!t) return;
+    try{
+      if(t.dataset.upToggle) await api('/admin/upstreams/update',{ method:'POST', body: JSON.stringify({ id:t.dataset.upToggle, enabled:t.dataset.upEn==='1' }) });
+      else if(t.dataset.upDel) await api('/admin/upstreams/delete',{ method:'POST', body: JSON.stringify({ id:t.dataset.upDel }) });
+      loadUpstreams();
+    }catch(e){ upMsg(e.message); }
+  });
+
   boot();
 </script>

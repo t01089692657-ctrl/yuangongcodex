@@ -61,14 +61,39 @@ function partsToText(msg) {
   return '';
 }
 
+// Choose an upstream for this request. Admin-added pool upstreams take priority
+// (weighted round-robin, skipping ones marked 'down'); if the pool is empty we
+// fall back to the single UPSTREAM_* configured at setup.
+let rrCounter = 0;
+function pickUpstream(store) {
+  const enabled = store.listUpstreams().filter((u) => u.enabled && u.baseUrl);
+  let candidates = enabled.filter((u) => u.health?.status !== 'down');
+  if (!candidates.length) candidates = enabled; // all down -> try anyway rather than fail
+  if (!candidates.length) {
+    if (!config.upstreamBaseUrl) return null;
+    return { id: null, baseUrl: config.upstreamBaseUrl, apiKey: config.upstreamApiKey, name: 'default (config)' };
+  }
+  const rotation = [];
+  for (const u of candidates) for (let i = 0; i < (u.weight || 1); i++) rotation.push(u);
+  const chosen = rotation[rrCounter % rotation.length];
+  rrCounter = (rrCounter + 1) % 1_000_000_000;
+  return chosen;
+}
+
 // pathSuffix is everything after the gateway's /v1 (e.g. "/responses").
 export async function proxyRequest({ pathSuffix, search = '', method, headers, bodyBuffer, identity, store, res }) {
-  const url = config.upstreamBaseUrl.replace(/\/$/, '') + pathSuffix + (search || '');
+  const up = pickUpstream(store);
+  if (!up) {
+    res.writeHead(502, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'no upstream configured — add one in the admin console' } }));
+    return;
+  }
+  const url = up.baseUrl.replace(/\/$/, '') + pathSuffix + (search || '');
 
   const upstreamHeaders = {
     'content-type': headers['content-type'] || 'application/json',
     accept: headers['accept'] || 'application/json',
-    authorization: `Bearer ${config.upstreamApiKey}`,
+    authorization: `Bearer ${up.apiKey}`,
   };
   // Preserve Codex sticky-session hint so multi-account upstreams pin correctly.
   if (headers['session_id']) upstreamHeaders['session_id'] = headers['session_id'];
@@ -81,10 +106,14 @@ export async function proxyRequest({ pathSuffix, search = '', method, headers, b
       body: method === 'GET' || method === 'HEAD' ? undefined : bodyBuffer,
     });
   } catch (err) {
+    store.markUpstreamHealth(up.id, false, `unreachable: ${err.message}`);
     res.writeHead(502, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: { message: `upstream unreachable: ${err.message}` } }));
     return;
   }
+  // Key/limit failures count against the upstream's health; ordinary 4xx don't.
+  const healthy = upstream.status < 500 && ![401, 403, 429].includes(upstream.status);
+  store.markUpstreamHealth(up.id, healthy, healthy ? null : `status ${upstream.status}`);
 
   let model = 'unknown';
   let reqBody = {};
@@ -99,6 +128,7 @@ export async function proxyRequest({ pathSuffix, search = '', method, headers, b
       email: identity.email,
       model,
       path,
+      upstream: up.name,
       prompt: promptSummary,
       promptTokens: usage.promptTokens,
       completionTokens: usage.completionTokens,
@@ -107,23 +137,34 @@ export async function proxyRequest({ pathSuffix, search = '', method, headers, b
   };
 
   if (ct.includes('text/event-stream') && upstream.body) {
-    // Stream to the client while teeing the text for usage extraction. A
-    // mid-stream upstream reset must not crash the gateway, so guard the loop
-    // and honor client backpressure instead of buffering unboundedly.
+    // Stream to the client while teeing the text for usage extraction. Guard the
+    // loop so a mid-stream upstream reset can't crash the gateway, and if the
+    // CLIENT disconnects, cancel the upstream reader so we don't hang/leak it.
     res.writeHead(upstream.status, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     let buffered = '';
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
+    let clientGone = false;
+    const onClose = () => { clientGone = true; reader.cancel().catch(() => {}); };
+    res.once('close', onClose);
     try {
       for (;;) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done || clientGone) break;
         buffered += decoder.decode(value, { stream: true });
-        if (!res.write(value)) await new Promise((r) => res.once('drain', r));
+        if (!res.write(value)) {
+          // Wait for drain OR client close — never block forever on a gone client.
+          await new Promise((resolve) => {
+            const finish = () => { res.off('drain', finish); res.off('close', finish); resolve(); };
+            res.once('drain', finish);
+            res.once('close', finish);
+          });
+        }
       }
     } catch (err) {
       console.error('[proxy] stream error:', err?.message || err);
     } finally {
+      res.off('close', onClose);
       try { res.end(); } catch { /* client gone */ }
     }
     meter(usageFromSSE(buffered), pathSuffix);

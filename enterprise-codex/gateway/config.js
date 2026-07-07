@@ -104,6 +104,9 @@ export const config = {
   activityCapture: env('ACTIVITY_CAPTURE', 'summary'),
   activitySummaryChars: Number(env('ACTIVITY_SUMMARY_CHARS', '240')),
 
+  // Max bytes for a proxied Codex request body (context can be large).
+  maxProxyBodyBytes: Number(env('MAX_PROXY_BODY_BYTES', String(25 * 1024 * 1024))),
+
   dataDir: env('DATA_DIR', path.join(__dirname, 'data')),
   seedFile: env('SEED_FILE', path.join(__dirname, 'data', 'employees.seed.json')),
   skillsDir: env('SKILLS_DIR', path.join(__dirname, '..', 'skills')),

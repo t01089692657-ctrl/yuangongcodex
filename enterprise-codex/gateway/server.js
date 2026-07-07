@@ -23,12 +23,29 @@ function send(res, status, obj, headers = {}) {
   res.writeHead(status, { 'content-type': 'application/json', ...headers });
   res.end(body);
 }
-function readBody(req) {
-  return new Promise((resolve) => {
+// Bounded body reader: cap total bytes so an unauthenticated client can't OOM
+// the gateway by streaming a huge/endless body. Rejects with 413 on exceed.
+function readBody(req, maxBytes = 1_000_000) {
+  return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks)));
+    let size = 0;
+    let over = false;
+    req.on('data', (c) => {
+      if (over) return;               // keep draining but stop buffering -> memory bounded
+      size += c.length;
+      if (size > maxBytes) { over = true; reject(httpError(413, 'request body too large')); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => { if (!over) resolve(Buffer.concat(chunks)); });
+    req.on('error', reject);
   });
+}
+
+// Only connections from the local machine may use demo-only routes, even when
+// the gateway is bound to 0.0.0.0 to serve employees on the LAN.
+function isLoopback(req) {
+  const a = req.socket.remoteAddress || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 }
 function bearer(req) {
   const h = req.headers['authorization'] || '';
@@ -94,6 +111,37 @@ function htmlPage(res, status, title, body) {
   res.end(`<!doctype html><meta charset=utf-8><title>${title}</title>` +
     `<div style="font:16px system-ui;max-width:520px;margin:16vh auto;text-align:center;color:#222">` +
     `<h2>${title}</h2><p style="color:#666">${body}</p></div>`);
+}
+
+// Never send an upstream's raw key to the browser — show a masked hint only.
+function maskUpstream(u) {
+  const k = u.apiKey || '';
+  const keyMasked = k ? `${k.slice(0, 4)}…${k.slice(-4)}` : '(none)';
+  const { apiKey, ...rest } = u;
+  return { ...rest, keyMasked, hasKey: !!k };
+}
+
+// Turn admin input into upstream records. Accepts a plain {name,baseUrl,apiKey}
+// OR a pasted JSON (`json`) that is a single object, an array, or a
+// new-api/one-api-style {channels:[...]}. Fields are matched leniently.
+function extractUpstreams(body) {
+  const out = [];
+  const pull = (o, fallbackName) => {
+    if (!o || typeof o !== 'object') return;
+    const baseUrl = o.base_url || o.baseUrl || o.url || o.endpoint;
+    const apiKey = o.api_key || o.apiKey || o.key || o.token || o.access_token || o.secret || '';
+    if (baseUrl) out.push({ name: o.name || fallbackName, baseUrl, apiKey, weight: o.weight });
+  };
+  if (body.baseUrl || body.base_url) pull(body, body.name);
+  if (body.json !== undefined && body.json !== '') {
+    let j = body.json;
+    if (typeof j === 'string') { try { j = JSON.parse(j); } catch { throw httpError(400, 'json is not valid JSON'); } }
+    if (Array.isArray(j)) j.forEach((x, i) => pull(x, x?.name || `upstream-${i + 1}`));
+    else if (Array.isArray(j.channels)) j.channels.forEach((x, i) => pull(x, x?.name || `channel-${i + 1}`));
+    else if (Array.isArray(j.upstreams)) j.upstreams.forEach((x, i) => pull(x, x?.name || `upstream-${i + 1}`));
+    else pull(j, body.name || j.name);
+  }
+  return out;
 }
 
 // Issue a manager session cookie for a verified manager identity.
@@ -265,7 +313,7 @@ const server = http.createServer(async (req, res) => {
     //    also GETs /v1/models etc. on startup, so forward the common methods.
     if (p.startsWith('/v1/') && ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       const identity = resolveKey(store, bearer(req));
-      const bodyBuffer = await readBody(req);
+      const bodyBuffer = await readBody(req, config.maxProxyBodyBytes); // Codex bodies can be large
       return await proxyRequest({
         pathSuffix: p.slice('/v1'.length), // e.g. /responses
         search: url.search,
@@ -298,7 +346,9 @@ const server = http.createServer(async (req, res) => {
     // Demo convenience: stands in for the real Feishu OAuth callback. Disabled
     // when DEMO_MODE=false. Still enforces the manager-role check.
     if (p === '/auth/admin-login/mock' && req.method === 'POST') {
-      if (!config.demoMode) return send(res, 404, { error: 'not found' });
+      // Demo backdoor: only when DEMO_MODE=true AND the request is from the local
+      // machine, so binding 0.0.0.0 for employees can't expose it to the LAN.
+      if (!config.demoMode || !isLoopback(req)) return send(res, 404, { error: 'not found' });
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
       if (!body.email) return send(res, 400, { error: 'email required' });
       const assertion = signSsoAssertion(body.email, config.ssoSharedSecret, config.ssoAssertionTtlSeconds);
@@ -336,6 +386,33 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
       const r = offboardEmployee(store, body.email);
       return send(res, 200, { email: body.email, by: who.email, ...r });
+    }
+
+    // 4c) Upstream pool: managers add relay/中转站 API keys or account JSON;
+    //     the gateway reverse-proxies employees across them. Keys are masked out.
+    if (p === '/admin/upstreams' && req.method === 'GET') {
+      requireManager(req);
+      return send(res, 200, { upstreams: store.listUpstreams().map(maskUpstream), fallback: config.upstreamBaseUrl || null });
+    }
+    if (p === '/admin/upstreams' && req.method === 'POST') {
+      const who = requireManager(req);
+      const body = JSON.parse((await readBody(req, 512 * 1024)).toString('utf8') || '{}');
+      let toAdd;
+      try { toAdd = extractUpstreams(body); } catch (e) { return send(res, 400, { error: e.message }); }
+      if (!toAdd.length) return send(res, 400, { error: 'need baseUrl+apiKey, or a json with base_url/api_key' });
+      const added = toAdd.map((u) => maskUpstream(store.addUpstream({ ...u, addedBy: who.email })));
+      return send(res, 200, { added });
+    }
+    if (p === '/admin/upstreams/update' && req.method === 'POST') {
+      requireManager(req);
+      const body = JSON.parse((await readBody(req, 512 * 1024)).toString('utf8') || '{}');
+      const u = store.updateUpstream(body.id, body);
+      return u ? send(res, 200, { upstream: maskUpstream(u) }) : send(res, 404, { error: 'no such upstream' });
+    }
+    if (p === '/admin/upstreams/delete' && req.method === 'POST') {
+      requireManager(req);
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      return send(res, 200, { removed: store.removeUpstream(body.id) });
     }
 
     // 5) Feishu/Lark offboarding webhook: 离职 status -> instant cutoff.
