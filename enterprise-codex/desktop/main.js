@@ -73,11 +73,17 @@ ipcMain.handle('launch', async () => {
 // Codex is a terminal UI. On macOS we open Terminal.app running a short-lived
 // launch script (user-only perms) that injects the key + CODEX_HOME then execs
 // the bundled Codex. Elsewhere we spawn it detached.
+// Single-quote every interpolated value so $, backticks, etc. can never be
+// interpreted by the shell (defense-in-depth even though values are trusted).
+const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+// Only allow a conventional env-var name to be emitted as `export NAME=`.
+const safeEnvName = (n) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(n) ? n : 'MYCOMPANY_CODEX_KEY');
+
 function launchInTerminal({ codexBin, codexHome, envKey, apiKey }) {
   if (process.platform === 'darwin') {
     const script = path.join(app.getPath('userData'), 'launch-codex.command');
     fs.writeFileSync(script,
-      `#!/bin/bash\nexport CODEX_HOME=${JSON.stringify(codexHome)}\nexport ${envKey}=${JSON.stringify(apiKey)}\nexec ${JSON.stringify(codexBin)}\n`,
+      `#!/bin/bash\nexport CODEX_HOME=${shq(codexHome)}\nexport ${safeEnvName(envKey)}=${shq(apiKey)}\nexec ${shq(codexBin)}\n`,
       { mode: 0o700 });
     spawn('open', ['-a', 'Terminal', script], { detached: true, stdio: 'ignore' }).unref();
   } else {
