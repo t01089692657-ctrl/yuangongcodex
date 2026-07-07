@@ -100,16 +100,22 @@ const DEV_DEFAULTS = {
 // default secret lets anyone forge a manager session / SSO assertion). In demo
 // mode we only warn, loudly.
 export function assertSecureConfig() {
-  const weak = Object.entries(DEV_DEFAULTS).filter(([k, v]) => config[k] === v).map(([k]) => k);
+  // Flag a secret as weak if it's a built-in default, a known placeholder
+  // (e.g. from a hand-edited .env.example), or too short to be real.
+  const weak = Object.keys(DEV_DEFAULTS).filter((k) => {
+    const v = String(config[k] || '');
+    return v === DEV_DEFAULTS[k] || /change-?me|replace|example|dev-secret|dev-token/i.test(v) || v.length < 16;
+  });
   if (config.demoMode) {
     console.warn('[gateway] DEMO_MODE=true — anonymous /auth/admin-login/mock is ENABLED. Never use in production.');
-    if (weak.length) console.warn(`[gateway] using dev-default secrets: ${weak.join(', ')}`);
+    if (weak.length) console.warn(`[gateway] weak/placeholder secrets: ${weak.join(', ')}`);
     return;
   }
   if (weak.length) {
     throw new Error(
-      `Refusing to start: these secrets are still built-in dev defaults: ${weak.join(', ')}. ` +
-      `Set them to strong random values (openssl rand -hex 32), or run with DEMO_MODE=true for local demos.`,
+      `Refusing to start: weak or placeholder secrets: ${weak.join(', ')}. ` +
+      `Run scripts/setup.sh to generate strong values (or set them via 'openssl rand -hex 32'), ` +
+      `or run with DEMO_MODE=true for local demos.`,
     );
   }
 }
