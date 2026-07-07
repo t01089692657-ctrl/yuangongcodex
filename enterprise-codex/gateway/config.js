@@ -98,6 +98,12 @@ export const config = {
   // Default model the client pins in Codex config.toml.
   defaultModel: env('CODEX_MODEL', 'gpt-5-codex'),
 
+  // Manager activity visibility: what the gateway records of each Codex request.
+  // 'summary' = truncated prompt (default), 'full' = up to 4k chars, 'off' = none.
+  // NOTE: this logs employee prompts — tell employees and check local privacy law.
+  activityCapture: env('ACTIVITY_CAPTURE', 'summary'),
+  activitySummaryChars: Number(env('ACTIVITY_SUMMARY_CHARS', '240')),
+
   dataDir: env('DATA_DIR', path.join(__dirname, 'data')),
   seedFile: env('SEED_FILE', path.join(__dirname, 'data', 'employees.seed.json')),
   skillsDir: env('SKILLS_DIR', path.join(__dirname, '..', 'skills')),

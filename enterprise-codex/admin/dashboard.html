@@ -57,6 +57,17 @@
       <tbody id="rows"></tbody></table>
     </div>
     <div class="card">
+      <div class="row" style="display:flex;align-items:baseline;gap:10px">
+        <h3 style="margin:0">Activity — what people are asking Codex</h3>
+        <span class="muted" id="actFilter"></span>
+        <span style="flex:1"></span>
+        <button class="link" onclick="setActivity(null)">show all</button>
+      </div>
+      <table><thead><tr><th>When</th><th>Employee</th><th>Prompt</th><th>Tokens</th></tr></thead>
+      <tbody id="actRows"></tbody></table>
+      <p class="muted" id="actNote" style="font-size:12px;margin:8px 0 0"></p>
+    </div>
+    <div class="card">
       <h3 style="margin-top:0">Offboard (instant cutoff)</h3>
       <input id="email" placeholder="employee@corp.com" size="24">
       <button onclick="revoke()">Revoke access</button>
@@ -98,15 +109,42 @@
       const tbody = document.getElementById('rows');
       tbody.innerHTML = lb.leaderboard.length ? lb.leaderboard.map((r,i) => {
         const e = emp[r.email] || {}; const st = e.status || 'active';
-        return `<tr class="${st==='active'?'':'off'}">
-          <td>${i+1}</td><td>${r.email}</td>
-          <td>${e.isAdmin?'<span class="pill mgr">'+(e.role||'manager')+'</span>':(e.role||'employee')}</td>
+        return `<tr class="${st==='active'?'':'off'}" style="cursor:pointer" data-email="${esc(r.email)}" title="click to see this person's Codex activity">
+          <td>${i+1}</td><td>${esc(r.email)}</td>
+          <td>${e.isAdmin?'<span class="pill mgr">'+esc(e.role||'manager')+'</span>':esc(e.role||'employee')}</td>
           <td><span class="pill ${st==='active'?'':'off'}">${st}</span></td>
           <td>${r.requests}</td><td>${r.totalTokens.toLocaleString()}</td>
           <td style="width:180px"><div class="bar" style="width:${Math.round(100*r.totalTokens/max)}%"></div></td>
         </tr>`; }).join('') : '<tr><td colspan="7" class="muted">No usage yet.</td></tr>';
+      loadActivity();
     }catch(e){ if(e.status===401) return show('loginView'); document.getElementById('rows').innerHTML = '<tr><td colspan="7" class="muted">'+e.message+'</td></tr>'; }
   }
+  let activityEmail = null;
+  const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const ago = (ts) => { const s = Math.max(0,(Date.now()-Date.parse(ts))/1000); return s<60?`${s|0}s ago`:s<3600?`${s/60|0}m ago`:s<86400?`${s/3600|0}h ago`:`${s/86400|0}d ago`; };
+  function setActivity(email){ activityEmail = email; document.getElementById('actFilter').textContent = email ? '· '+email : ''; loadActivity(); }
+  async function loadActivity(){
+    try{
+      const q = activityEmail ? '?email='+encodeURIComponent(activityEmail)+'&limit=100' : '?limit=60';
+      const a = await api('/admin/activity'+q);
+      const rows = document.getElementById('actRows');
+      rows.innerHTML = a.activity.length ? a.activity.map(x =>
+        `<tr><td class="muted" style="white-space:nowrap">${ago(x.ts)}</td><td style="white-space:nowrap">${esc(x.email)}</td>`+
+        `<td>${x.prompt?esc(x.prompt):'<span class=muted>(not captured)</span>'}</td><td class="muted">${(x.totalTokens||0).toLocaleString()}</td></tr>`
+      ).join('') : '<tr><td colspan="4" class="muted">No activity yet.</td></tr>';
+      document.getElementById('actNote').textContent = a.capture==='off'
+        ? 'Prompt capture is OFF (ACTIVITY_CAPTURE=off). Only token counts are recorded.'
+        : `Prompt capture: ${a.capture}. Employees' Codex prompts are logged — ensure staff are informed.`;
+    }catch(e){ if(e.status===401) return show('loginView'); }
+  }
+  // Click an employee row -> filter activity to that person (delegated; no
+  // interpolated email in markup, so an odd email can't inject).
+  document.getElementById('rows').addEventListener('click', (ev) => {
+    const tr = ev.target.closest('tr[data-email]');
+    if (tr) setActivity(tr.dataset.email);
+  });
+  // Live-ish refresh of the activity feed.
+  setInterval(() => { if(!document.getElementById('appView').classList.contains('hidden')) loadActivity(); }, 5000);
   async function revoke(){
     const email = document.getElementById('email').value.trim();
     try{ const r = await api('/admin/revoke', { method:'POST', body: JSON.stringify({ email }) });

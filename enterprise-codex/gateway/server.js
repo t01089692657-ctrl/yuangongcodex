@@ -323,6 +323,13 @@ const server = http.createServer(async (req, res) => {
       const rows = store.usageByEmployee().sort((a, b) => b.totalTokens - a.totalTokens);
       return send(res, 200, { leaderboard: rows });
     }
+    // What employees are doing in Codex (prompt feed). Manager-only.
+    if (p === '/admin/activity' && req.method === 'GET') {
+      requireManager(req);
+      const email = url.searchParams.get('email');
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || '50')));
+      return send(res, 200, { capture: config.activityCapture, activity: store.recentActivity({ email, limit }) });
+    }
     if (p === '/admin/revoke' && req.method === 'POST') {
       const who = requireManager(req); // audit who performed the offboarding
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');

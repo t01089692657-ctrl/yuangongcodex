@@ -2,62 +2,63 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; font-src 'self'" />
 <title>Company Codex</title>
+<link rel="stylesheet" href="vendor/xterm.css" />
 <style>
-  :root { color-scheme: light dark; --bg:#fff; --fg:#111; --muted:#666; --line:#e5e5e5; --accent:#2563eb; --ok:#16a34a; --card:#fafafa; }
-  @media (prefers-color-scheme: dark){ :root{ --bg:#0f1115; --fg:#e8e8e8; --muted:#9aa0aa; --line:#242833; --accent:#60a5fa; --ok:#4ade80; --card:#161922; } }
-  *{ box-sizing:border-box; } body{ font:14px/1.5 system-ui,sans-serif; margin:0; background:var(--bg); color:var(--fg); }
-  .wrap{ padding:22px; }
-  h1{ font-size:18px; margin:0 0 2px; } .sub{ color:var(--muted); font-size:12px; margin-bottom:18px; }
-  button{ font:inherit; width:100%; padding:11px; border-radius:9px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; }
-  button.secondary{ background:transparent; color:var(--accent); }
+  :root { color-scheme: light dark; --bg:#0f1115; --fg:#e8e8e8; --muted:#9aa0aa; --line:#242833; --accent:#2563eb; --ok:#4ade80; --card:#161922; }
+  *{ box-sizing:border-box; } html,body{ height:100%; }
+  body{ font:14px/1.5 system-ui,sans-serif; margin:0; background:var(--bg); color:var(--fg); display:flex; flex-direction:column; }
+  button{ font:inherit; padding:11px 14px; border-radius:9px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; }
+  button.secondary{ background:transparent; color:var(--accent); } button.link{ background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;padding:4px; }
   button:disabled{ opacity:.5; cursor:default; }
-  .card{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin:12px 0; }
-  label{ display:block; font-size:12px; color:var(--muted); margin:8px 0 3px; }
+  .center{ flex:1; display:flex; align-items:center; justify-content:center; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:22px; width:360px; }
+  .card h1{ font-size:18px; margin:0 0 2px; } .sub{ color:var(--muted); font-size:12px; }
+  label{ display:block; font-size:12px; color:var(--muted); margin:10px 0 3px; }
   input{ width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit; }
-  .row{ display:flex; align-items:center; gap:10px; }
-  .avatar{ width:38px;height:38px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700; }
-  .log{ font:12px/1.5 ui-monospace,monospace; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px; height:120px; overflow:auto; white-space:pre-wrap; color:var(--muted); }
+  header{ display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line); }
+  .avatar{ width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px; }
   .pill{ font-size:11px; padding:2px 8px; border:1px solid var(--ok); color:var(--ok); border-radius:999px; }
-  .link{ background:none;border:none;color:var(--accent);width:auto;padding:4px;cursor:pointer;font-size:12px; }
+  #termWrap{ flex:1; min-height:0; background:#000; }
+  #term{ width:100%; height:100%; padding:6px; }
+  .log{ font:12px/1.5 ui-monospace,monospace; color:var(--muted); padding:8px 14px; max-height:120px; overflow:auto; white-space:pre-wrap; }
   .hidden{ display:none; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Company Codex</h1>
-  <div class="sub">Sign in with Feishu to use Codex — zero setup.</div>
-
   <!-- SIGN IN -->
-  <div id="signin">
+  <div id="signin" class="center">
     <div class="card">
-      <button id="loginBtn">🔐 使用飞书登录 / Sign in with Feishu</button>
+      <h1>Company Codex</h1>
+      <div class="sub" style="margin-bottom:16px">Sign in with Feishu to use Codex — zero setup.</div>
+      <button id="loginBtn" style="width:100%">🔐 使用飞书登录 / Sign in with Feishu</button>
       <button class="link" id="settingsToggle" style="margin-top:8px">Settings</button>
       <div id="settings" class="hidden">
         <label>Gateway URL</label><input id="gatewayUrl" placeholder="https://gateway.corp.com" />
         <label>Bundled Codex binary (optional)</label><input id="codexBin" placeholder="/path/to/codex" />
-        <button class="secondary" id="saveSettings" style="margin-top:10px">Save</button>
+        <button class="secondary" id="saveSettings" style="margin-top:10px;width:100%">Save</button>
       </div>
+      <div class="log" id="loginLog" aria-live="polite"></div>
     </div>
   </div>
 
-  <!-- SIGNED IN -->
-  <div id="app" class="hidden">
-    <div class="card">
-      <div class="row">
-        <div class="avatar" id="avatar">?</div>
-        <div><b id="empName"></b><br><span class="sub" id="empEmail"></span></div>
-        <span style="flex:1"></span><span class="pill">provisioned</span>
-      </div>
-      <div class="sub" id="empSkills" style="margin-top:10px"></div>
-    </div>
-    <button id="launchBtn">🚀 启动 Codex / Launch Codex</button>
-    <button class="link" id="logoutBtn" style="margin-top:8px">Sign out</button>
+  <!-- SIGNED IN: header + embedded Codex terminal -->
+  <div id="app" class="hidden" style="flex:1;display:flex;flex-direction:column;min-height:0">
+    <header>
+      <div class="avatar" id="avatar">?</div>
+      <div><b id="empName"></b> <span class="sub" id="empEmail"></span></div>
+      <span class="sub" id="empSkills" style="margin-left:8px"></span>
+      <span style="flex:1"></span>
+      <span class="pill" id="statusPill">provisioned</span>
+      <button class="link" id="logoutBtn">Sign out</button>
+    </header>
+    <div id="termWrap"><div id="term"></div></div>
+    <div class="log" id="fallbackLog" aria-live="polite"></div>
   </div>
 
-  <div class="log" id="log" aria-live="polite"></div>
-</div>
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>

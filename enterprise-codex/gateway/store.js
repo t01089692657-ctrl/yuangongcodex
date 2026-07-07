@@ -91,12 +91,24 @@ export class Store {
   usageByEmployee() {
     const agg = {};
     for (const u of this.data.usage) {
-      const a = (agg[u.email] ||= { email: u.email, requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+      const a = (agg[u.email] ||= { email: u.email, requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, lastActive: null });
       a.requests++;
       a.promptTokens += u.promptTokens || 0;
       a.completionTokens += u.completionTokens || 0;
       a.totalTokens += u.totalTokens || 0;
+      if (!a.lastActive || u.ts > a.lastActive) a.lastActive = u.ts;
     }
     return Object.values(agg);
+  }
+
+  // Activity feed: what employees have been asking Codex (newest first).
+  recentActivity({ email = null, limit = 50 } = {}) {
+    const out = [];
+    for (let i = this.data.usage.length - 1; i >= 0 && out.length < limit; i--) {
+      const u = this.data.usage[i];
+      if (email && u.email !== String(email).toLowerCase()) continue;
+      out.push({ ts: u.ts, email: u.email, model: u.model, prompt: u.prompt || null, totalTokens: u.totalTokens || 0 });
+    }
+    return out;
   }
 }
