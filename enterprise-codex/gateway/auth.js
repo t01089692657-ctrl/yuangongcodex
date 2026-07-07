@@ -78,6 +78,27 @@ export function signSsoAssertion(email, secret, ttlSeconds) {
   return `${payload}.${sig}`;
 }
 
+// --- manager session --------------------------------------------------
+// Signed session token for the manager backend (same HMAC scheme). The role is
+// re-checked against the live store on every request, so a demoted/offboarded
+// manager's session stops working immediately regardless of TTL.
+export function signSession(profile, secret, ttlSeconds) {
+  const payload = Buffer.from(JSON.stringify({ ...profile, exp: Math.floor(Date.now() / 1000) + ttlSeconds })).toString('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  return `${payload}.${sig}`;
+}
+
+export function verifySession(token, secret) {
+  if (typeof token !== 'string' || !token.includes('.')) throw httpError(401, 'missing manager session');
+  const [payload, sig] = token.split('.');
+  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  if (!safeEqual(sig, expected)) throw httpError(401, 'invalid manager session');
+  let claims;
+  try { claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch { throw httpError(401, 'unreadable session'); }
+  if (!claims.exp || claims.exp < Math.floor(Date.now() / 1000)) throw httpError(401, 'session expired');
+  return claims;
+}
+
 export function verifySsoAssertion(assertion, secret) {
   if (typeof assertion !== 'string' || !assertion.includes('.')) throw httpError(401, 'missing or malformed SSO assertion');
   const [payload, sig] = assertion.split('.');

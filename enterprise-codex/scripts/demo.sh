@@ -37,8 +37,20 @@ echo "--- config.toml ---"; cat "$DATA_DIR/codex-alice/config.toml"
 echo "--- auth.json ---";   cat "$DATA_DIR/codex-alice/auth.json"; echo
 echo "--- synced skills ---"; ls -1 "$DATA_DIR/codex-alice" "$DATA_DIR/codex-alice/prompts"
 
-echo; echo "== admin leaderboard =="
+echo; echo "== admin leaderboard (static automation token) =="
 curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$GW/admin/leaderboard"; echo
+
+echo; echo "== manager backend: Feishu SSO login + manager/employee separation =="
+COOKIES="$DATA_DIR/mgr.cookies"
+echo -n "  employee bob tries to open the manager console -> HTTP "
+curl -s -o /dev/null -w "%{http_code}  (denied: not a manager)\n" -c "$COOKIES" -X POST "$GW/auth/admin-login/mock" -H 'content-type: application/json' -d '{"email":"bob@corp.com"}'
+echo -n "  manager alice logs in via Feishu -> HTTP "
+curl -s -o /dev/null -w "%{http_code}\n" -c "$COOKIES" -X POST "$GW/auth/admin-login/mock" -H 'content-type: application/json' -d '{"email":"alice@corp.com"}'
+echo -n "  who am I: "; curl -s -b "$COOKIES" "$GW/auth/admin/me"; echo
+echo -n "  manager reads leaderboard with session cookie -> HTTP "
+curl -s -o /dev/null -w "%{http_code}\n" -b "$COOKIES" "$GW/admin/leaderboard"
+echo -n "  no session at all -> HTTP "
+curl -s -o /dev/null -w "%{http_code}  (login required)\n" "$GW/admin/leaderboard"
 
 echo; echo "== offboarding: prove a live key dies the instant HR marks 离职 =="
 ASSERT=$(node -e 'const c=require("crypto");const e="alice@corp.com";const p=Buffer.from(JSON.stringify({email:e,exp:Math.floor(Date.now()/1000)+120})).toString("base64url");process.stdout.write(p+"."+c.createHmac("sha256",process.env.SSO_SHARED_SECRET).update(p).digest("hex"))')

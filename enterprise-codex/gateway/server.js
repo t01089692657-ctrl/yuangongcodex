@@ -7,7 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { config } from './config.js';
 import { Store } from './store.js';
-import { issueKeyForEmployee, resolveKey, offboardEmployee, httpError, safeEqual, verifySsoAssertion } from './auth.js';
+import { issueKeyForEmployee, resolveKey, offboardEmployee, httpError, safeEqual, verifySsoAssertion, signSsoAssertion, signSession, verifySession } from './auth.js';
 import { proxyRequest } from './proxy.js';
 
 const store = new Store(config.dataDir, config.seedFile);
@@ -33,8 +33,42 @@ function bearer(req) {
   const h = req.headers['authorization'] || '';
   return h.startsWith('Bearer ') ? h.slice(7).trim() : null;
 }
-function requireAdmin(req) {
-  if (!safeEqual(bearer(req), config.adminToken)) throw httpError(401, 'admin auth required');
+function cookie(req, name) {
+  for (const part of (req.headers.cookie || '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return null;
+}
+
+// Authorize a MANAGER for /admin/*. Accepts either the static automation token
+// or a valid manager session (cookie/bearer). A regular employee's session is
+// rejected with 403 — this is what separates managers from ordinary staff.
+function requireManager(req) {
+  const b = bearer(req);
+  if (b && safeEqual(b, config.adminToken)) return { email: 'automation', name: 'automation', role: 'automation', via: 'token' };
+  const token = cookie(req, 'mgr_session') || (b && b.includes('.') ? b : null);
+  if (!token) throw httpError(401, 'manager login required');
+  const claims = verifySession(token, config.adminSessionSecret); // throws 401 on bad/expired
+  const emp = store.getEmployee(claims.email);
+  if (!emp || emp.status !== 'active') throw httpError(401, 'session revoked');
+  if (!emp.isAdmin) throw httpError(403, 'manager role required'); // live re-check
+  return { email: claims.email, name: emp.name, role: emp.role || 'manager', via: 'session' };
+}
+
+// Issue a manager session cookie for a verified manager identity.
+function issueManagerSession(res, email) {
+  const emp = store.getEmployee(email);
+  if (!emp) throw httpError(404, 'unknown employee');
+  if (emp.status !== 'active') throw httpError(403, 'employee is not active');
+  if (!emp.isAdmin) throw httpError(403, 'not authorized: manager role required');
+  const profile = { email: String(email).toLowerCase(), name: emp.name, role: emp.role || 'manager' };
+  const token = signSession(profile, config.adminSessionSecret, config.adminSessionTtlSeconds);
+  const flags = ['HttpOnly', 'Path=/', 'SameSite=Strict', `Max-Age=${config.adminSessionTtlSeconds}`];
+  if (config.cookieSecure) flags.push('Secure');
+  res.setHeader('Set-Cookie', `mgr_session=${encodeURIComponent(token)}; ${flags.join('; ')}`);
+  return send(res, 200, { manager: profile, session: token });
 }
 
 // Verify Feishu/Lark webhook: HMAC-SHA256(secret, "<timestamp>.<rawBody>") in
@@ -165,21 +199,46 @@ const server = http.createServer(async (req, res) => {
       return serveSkillFile(res, url.searchParams.get('path') || '');
     }
 
-    // 4) Admin: usage, leaderboard, manual revoke.
+    // 4) Manager backend login (Feishu SSO -> manager session cookie).
+    //    Only employees with isAdmin=true (managers) may obtain a session.
+    if (p === '/auth/admin-login' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const { email } = verifySsoAssertion(body.assertion, config.ssoSharedSecret);
+      return issueManagerSession(res, email);
+    }
+    // Demo convenience: stands in for the real Feishu OAuth callback. Disabled
+    // when DEMO_MODE=false. Still enforces the manager-role check.
+    if (p === '/auth/admin-login/mock' && req.method === 'POST') {
+      if (!config.demoMode) return send(res, 404, { error: 'not found' });
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      if (!body.email) return send(res, 400, { error: 'email required' });
+      const assertion = signSsoAssertion(body.email, config.ssoSharedSecret, config.ssoAssertionTtlSeconds);
+      const { email } = verifySsoAssertion(assertion, config.ssoSharedSecret);
+      return issueManagerSession(res, email);
+    }
+    if (p === '/auth/admin/me' && req.method === 'GET') {
+      return send(res, 200, { manager: requireManager(req) });
+    }
+    if (p === '/auth/admin-logout' && req.method === 'POST') {
+      res.setHeader('Set-Cookie', 'mgr_session=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0');
+      return send(res, 200, { ok: true });
+    }
+
+    // 4b) Manager-only data: usage, leaderboard, manual revoke.
     if (p === '/admin/usage' && req.method === 'GET') {
-      requireAdmin(req);
+      requireManager(req);
       return send(res, 200, { employees: store.listEmployees(), usage: store.usageByEmployee() });
     }
     if (p === '/admin/leaderboard' && req.method === 'GET') {
-      requireAdmin(req);
+      requireManager(req);
       const rows = store.usageByEmployee().sort((a, b) => b.totalTokens - a.totalTokens);
       return send(res, 200, { leaderboard: rows });
     }
     if (p === '/admin/revoke' && req.method === 'POST') {
-      requireAdmin(req);
+      const who = requireManager(req); // audit who performed the offboarding
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
       const r = offboardEmployee(store, body.email);
-      return send(res, 200, { email: body.email, ...r });
+      return send(res, 200, { email: body.email, by: who.email, ...r });
     }
 
     // 5) Feishu/Lark offboarding webhook: 离职 status -> instant cutoff.

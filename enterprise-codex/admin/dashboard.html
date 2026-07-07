@@ -1,69 +1,117 @@
-<title>Codex Platform — Admin</title>
+<title>Codex Platform — Manager Console</title>
 <style>
-  :root { color-scheme: light dark; --bg:#fff; --fg:#111; --muted:#666; --line:#e5e5e5; --bar:#3b82f6; --card:#fafafa; }
-  @media (prefers-color-scheme: dark){ :root{ --bg:#0f1115; --fg:#e8e8e8; --muted:#9aa0aa; --line:#242833; --bar:#60a5fa; --card:#161922; } }
+  :root { color-scheme: light dark; --bg:#fff; --fg:#111; --muted:#666; --line:#e5e5e5; --bar:#3b82f6; --card:#fafafa; --accent:#2563eb; --danger:#dc2626; --ok:#16a34a; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#0f1115; --fg:#e8e8e8; --muted:#9aa0aa; --line:#242833; --bar:#60a5fa; --card:#161922; --accent:#60a5fa; --danger:#f87171; --ok:#4ade80; } }
+  *{ box-sizing:border-box; }
   body{ font:14px/1.5 system-ui,sans-serif; margin:0; background:var(--bg); color:var(--fg); }
-  header{ padding:20px 24px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-  h1{ font-size:18px; margin:0; }
-  main{ padding:24px; max-width:900px; margin:0 auto; }
-  .card{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:20px; }
+  header{ padding:16px 24px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  h1{ font-size:17px; margin:0; }
+  main{ padding:24px; max-width:920px; margin:0 auto; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px 20px; margin-bottom:20px; }
   table{ width:100%; border-collapse:collapse; }
   th,td{ text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
   th{ color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
-  .bar{ height:8px; background:var(--bar); border-radius:4px; }
+  .bar{ height:8px; background:var(--bar); border-radius:4px; min-width:2px; }
   .muted{ color:var(--muted); }
-  .pill{ font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); }
-  .off{ opacity:.5; }
-  input,button{ font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
+  .pill{ font-size:12px; padding:2px 9px; border-radius:999px; border:1px solid var(--line); white-space:nowrap; }
+  .pill.mgr{ border-color:var(--accent); color:var(--accent); }
+  .pill.off{ color:var(--danger); border-color:var(--danger); }
+  .off td{ opacity:.5; }
+  input,button{ font:inherit; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
   button{ cursor:pointer; }
+  button.primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.link{ border:none; background:none; color:var(--accent); padding:4px; }
+  .center{ min-height:70vh; display:flex; align-items:center; justify-content:center; }
+  .login{ width:340px; text-align:center; }
+  .avatar{ width:34px; height:34px; border-radius:50%; background:var(--accent); color:#fff; display:inline-flex; align-items:center; justify-content:center; font-weight:700; }
+  .err{ color:var(--danger); min-height:20px; }
+  .hidden{ display:none; }
 </style>
-<header>
-  <h1>Codex Platform · Admin</h1>
-  <span class="muted">token usage & offboarding</span>
-  <span style="flex:1"></span>
-  <input id="tok" placeholder="admin token" value="admin-dev-token" size="18">
-  <button onclick="load()">Refresh</button>
-</header>
-<main>
-  <div class="card">
-    <h3 style="margin-top:0">Usage leaderboard</h3>
-    <table><thead><tr><th>#</th><th>Employee</th><th>Status</th><th>Requests</th><th>Total tokens</th><th></th></tr></thead>
-    <tbody id="rows"><tr><td colspan="6" class="muted">Enter admin token and Refresh…</td></tr></tbody></table>
+
+<!-- LOGIN VIEW -->
+<div id="loginView" class="center hidden">
+  <div class="card login">
+    <h1>Codex Platform</h1>
+    <p class="muted">Manager Console — sign in with your company account</p>
+    <p class="muted" style="font-size:12px">Demo stands in for Feishu SSO. Managers: alice@corp.com or grace@corp.com. Employees (e.g. bob@corp.com) are denied.</p>
+    <input id="loginEmail" placeholder="you@corp.com" style="width:100%; margin:8px 0" onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="primary" style="width:100%" onclick="doLogin()">🔐 Login with Feishu</button>
+    <p id="loginErr" class="err"></p>
   </div>
-  <div class="card">
-    <h3 style="margin-top:0">Offboard (instant cutoff)</h3>
-    <input id="email" placeholder="employee@corp.com" size="24">
-    <button onclick="revoke()">Revoke access</button>
-    <span id="revmsg" class="muted"></span>
-  </div>
-</main>
+</div>
+
+<!-- APP VIEW -->
+<div id="appView" class="hidden">
+  <header>
+    <h1>Codex Platform · Manager Console</h1>
+    <span class="muted">token usage & offboarding</span>
+    <span style="flex:1"></span>
+    <span class="avatar" id="mgrAvatar"></span>
+    <span><b id="mgrName"></b> <span class="pill mgr" id="mgrRole"></span></span>
+    <button class="link" onclick="logout()">Sign out</button>
+  </header>
+  <main>
+    <div class="card">
+      <h3 style="margin-top:0">Usage leaderboard</h3>
+      <table><thead><tr><th>#</th><th>Employee</th><th>Role</th><th>Status</th><th>Requests</th><th>Total tokens</th><th></th></tr></thead>
+      <tbody id="rows"></tbody></table>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Offboard (instant cutoff)</h3>
+      <input id="email" placeholder="employee@corp.com" size="24">
+      <button onclick="revoke()">Revoke access</button>
+      <span id="revmsg" class="muted"></span>
+    </div>
+  </main>
+</div>
+
 <script>
-  const tok = () => document.getElementById('tok').value.trim();
+  const show = (id) => { for (const v of ['loginView','appView']) document.getElementById(v).classList.toggle('hidden', v !== id); };
   async function api(pathname, opts={}){
-    const r = await fetch(pathname, { ...opts, headers: { authorization: 'Bearer '+tok(), 'content-type':'application/json', ...(opts.headers||{}) } });
-    if(!r.ok) throw new Error(await r.text());
-    return r.json();
+    const r = await fetch(pathname, { credentials:'same-origin', ...opts, headers:{ 'content-type':'application/json', ...(opts.headers||{}) } });
+    const body = await r.json().catch(()=>({}));
+    if(!r.ok){ const e = new Error(body.error?.message || body.error || r.statusText); e.status = r.status; throw e; }
+    return body;
   }
+  async function boot(){
+    try{ const me = await api('/auth/admin/me'); renderManager(me.manager); show('appView'); load(); }
+    catch{ show('loginView'); }
+  }
+  function renderManager(m){
+    document.getElementById('mgrName').textContent = m.name || m.email;
+    document.getElementById('mgrRole').textContent = m.role || 'manager';
+    document.getElementById('mgrAvatar').textContent = (m.name||m.email||'?').trim()[0].toUpperCase();
+  }
+  async function doLogin(){
+    const email = document.getElementById('loginEmail').value.trim();
+    const err = document.getElementById('loginErr'); err.textContent='';
+    try{ const r = await api('/auth/admin-login/mock', { method:'POST', body: JSON.stringify({ email }) });
+      renderManager(r.manager); show('appView'); load();
+    }catch(e){ err.textContent = e.status===403 ? `${email} is not a manager — access denied.` : (e.message||'login failed'); }
+  }
+  async function logout(){ try{ await api('/auth/admin-logout',{method:'POST'}); }catch{} show('loginView'); }
   async function load(){
     try{
       const [lb, u] = await Promise.all([ api('/admin/leaderboard'), api('/admin/usage') ]);
-      const statusOf = Object.fromEntries(u.employees.map(e => [e.email, e.status]));
+      const emp = Object.fromEntries(u.employees.map(e => [e.email, e]));
       const max = Math.max(1, ...lb.leaderboard.map(r => r.totalTokens));
       const tbody = document.getElementById('rows');
       tbody.innerHTML = lb.leaderboard.length ? lb.leaderboard.map((r,i) => {
-        const st = statusOf[r.email] || 'active';
+        const e = emp[r.email] || {}; const st = e.status || 'active';
         return `<tr class="${st==='active'?'':'off'}">
           <td>${i+1}</td><td>${r.email}</td>
-          <td><span class="pill">${st}</span></td>
+          <td>${e.isAdmin?'<span class="pill mgr">'+(e.role||'manager')+'</span>':(e.role||'employee')}</td>
+          <td><span class="pill ${st==='active'?'':'off'}">${st}</span></td>
           <td>${r.requests}</td><td>${r.totalTokens.toLocaleString()}</td>
           <td style="width:180px"><div class="bar" style="width:${Math.round(100*r.totalTokens/max)}%"></div></td>
-        </tr>`; }).join('') : '<tr><td colspan="6" class="muted">No usage yet.</td></tr>';
-    }catch(e){ document.getElementById('rows').innerHTML = '<tr><td colspan="6" class="muted">'+e.message+'</td></tr>'; }
+        </tr>`; }).join('') : '<tr><td colspan="7" class="muted">No usage yet.</td></tr>';
+    }catch(e){ if(e.status===401) return show('loginView'); document.getElementById('rows').innerHTML = '<tr><td colspan="7" class="muted">'+e.message+'</td></tr>'; }
   }
   async function revoke(){
     const email = document.getElementById('email').value.trim();
     try{ const r = await api('/admin/revoke', { method:'POST', body: JSON.stringify({ email }) });
-      document.getElementById('revmsg').textContent = `revoked ${r.revoked} key(s) for ${email}`; load();
+      document.getElementById('revmsg').textContent = r.found ? `revoked ${r.revoked} key(s) for ${email} (by ${r.by})` : `no such employee: ${email}`; load();
     }catch(e){ document.getElementById('revmsg').textContent = e.message; }
   }
+  boot();
 </script>

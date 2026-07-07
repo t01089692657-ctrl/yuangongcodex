@@ -23,8 +23,18 @@ export const config = {
   upstreamBaseUrl: env('UPSTREAM_BASE_URL', 'http://127.0.0.1:8091/v1'),
   upstreamApiKey: env('UPSTREAM_API_KEY', 'mock-upstream-key'),
 
-  // Admin API bearer token (used by dashboard + admin CLI).
+  // Static admin bearer token for automation/CI (not for humans).
   adminToken: env('ADMIN_TOKEN', 'admin-dev-token'),
+
+  // Manager backend: humans log in via Feishu SSO and get a signed session.
+  // Only employees with isAdmin=true (managers) may hold a manager session.
+  adminSessionSecret: env('ADMIN_SESSION_SECRET', 'admin-session-dev-secret'),
+  adminSessionTtlSeconds: Number(env('ADMIN_SESSION_TTL_SECONDS', '3600')),
+  // DEMO_MODE enables /auth/admin-login/mock (stands in for the Feishu OAuth
+  // callback). Set DEMO_MODE=false in production so only the real SSO path works.
+  demoMode: env('DEMO_MODE', 'true') !== 'false',
+  // Send the Secure cookie flag (enable in production behind HTTPS).
+  cookieSecure: env('COOKIE_SECURE', 'false') === 'true',
 
   // Shared secret to verify the Feishu/Lark offboarding webhook.
   feishuWebhookSecret: env('FEISHU_WEBHOOK_SECRET', 'feishu-dev-secret'),

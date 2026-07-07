@@ -1,8 +1,9 @@
 {
   "employees": [
-    { "email": "alice@corp.com", "name": "Alice Chen", "role": "senior-engineer", "status": "active", "isAdmin": true },
-    { "email": "bob@corp.com", "name": "Bob Li", "role": "engineer", "status": "active" },
-    { "email": "carol@corp.com", "name": "Carol Wang", "role": "engineer", "status": "active" },
-    { "email": "dave@corp.com", "name": "Dave Zhao", "role": "contractor", "status": "active" }
+    { "email": "alice@corp.com", "name": "Alice Chen", "role": "engineering-manager", "status": "active", "isAdmin": true },
+    { "email": "grace@corp.com", "name": "Grace Sun", "role": "platform-lead", "status": "active", "isAdmin": true },
+    { "email": "bob@corp.com", "name": "Bob Li", "role": "engineer", "status": "active", "isAdmin": false },
+    { "email": "carol@corp.com", "name": "Carol Wang", "role": "engineer", "status": "active", "isAdmin": false },
+    { "email": "dave@corp.com", "name": "Dave Zhao", "role": "contractor", "status": "active", "isAdmin": false }
   ]
 }
