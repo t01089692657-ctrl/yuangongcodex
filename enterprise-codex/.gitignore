@@ -1,0 +1,7 @@
+node_modules/
+.env
+# runtime state (the employee directory *seed* is committed; live store is not)
+gateway/data/store.json
+gateway/data/store.json.tmp
+gateway/data/demo/
+gateway/data/_check/

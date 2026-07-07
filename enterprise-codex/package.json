@@ -1,0 +1,15 @@
+{
+  "name": "enterprise-codex-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Enterprise platform to distribute OpenAI Codex to employees with revocable access and company-pushed skills.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "gateway": "node gateway/server.js",
+    "mock": "node mock-upstream/server.js",
+    "client": "node client/launcher.js",
+    "mcp-smoke": "node tools/mcp-smoke.js",
+    "demo": "bash scripts/demo.sh"
+  }
+}

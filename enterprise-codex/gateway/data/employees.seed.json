@@ -1,0 +1,8 @@
+{
+  "employees": [
+    { "email": "alice@corp.com", "name": "Alice Chen", "role": "senior-engineer", "status": "active", "isAdmin": true },
+    { "email": "bob@corp.com", "name": "Bob Li", "role": "engineer", "status": "active" },
+    { "email": "carol@corp.com", "name": "Carol Wang", "role": "engineer", "status": "active" },
+    { "email": "dave@corp.com", "name": "Dave Zhao", "role": "contractor", "status": "active" }
+  ]
+}
