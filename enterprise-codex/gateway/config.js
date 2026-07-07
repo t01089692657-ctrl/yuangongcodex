@@ -1,8 +1,33 @@
 // Gateway configuration, all env-driven with demo-safe defaults.
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import fs from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Load a project-root .env (KEY=VALUE) if present, without overriding anything
+// already set in the real environment. Zero-dep so `node gateway/server.js`
+// just works after `scripts/setup.sh` writes .env.
+function loadEnvFile() {
+  const envPath = path.join(__dirname, '..', '.env');
+  if (!fs.existsSync(envPath)) return;
+  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const eq = t.indexOf('=');
+    if (eq < 0) continue;
+    const k = t.slice(0, eq).trim();
+    let v = t.slice(eq + 1).trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1); // quoted: keep verbatim (may contain '#')
+    } else {
+      const h = v.search(/\s#/); // unquoted: strip a trailing " # comment"
+      if (h >= 0) v = v.slice(0, h).trim();
+    }
+    if (process.env[k] === undefined) process.env[k] = v;
+  }
+}
+loadEnvFile();
 
 function env(name, fallback) {
   const v = process.env[name];

@@ -177,8 +177,9 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // 2) Codex-facing proxy. Codex hits /v1/responses (wire_api=responses).
-    if (p.startsWith('/v1/') && req.method === 'POST') {
+    // 2) Codex-facing proxy. Codex POSTs /v1/responses (wire_api=responses) and
+    //    also GETs /v1/models etc. on startup, so forward the common methods.
+    if (p.startsWith('/v1/') && ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       const identity = resolveKey(store, bearer(req));
       const bodyBuffer = await readBody(req);
       return await proxyRequest({

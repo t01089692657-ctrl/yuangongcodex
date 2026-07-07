@@ -5,9 +5,9 @@ provisioned via SSO, metered and revocable at a gateway, and the company pushes
 its own "skills" (AGENTS.md + prompt commands + MCP tools) onto every Codex.
 When an employee leaves, their access dies on the next request.
 
-This is a **runnable reference implementation** of the two-plane design in
-[`../docs/enterprise-codex-platform.md`](../docs/enterprise-codex-platform.md).
-Zero external dependencies — Node ≥ 20 only.
+A **runnable reference implementation**. Zero external dependencies — Node ≥ 20 only.
+
+**Docs (中文):** [产品介绍](docs/产品介绍.md) · [使用说明（含 Mac mini 安装）](docs/使用说明.md)
 
 ```
 enterprise-codex/
@@ -26,12 +26,23 @@ enterprise-codex/
 │   ├── prompts/        slash-command prompts
 │   └── mcp/company-mcp.js   push-type tools (edit once → everyone updates)
 ├── mock-upstream/    fake OpenAI-compatible provider so the demo runs offline
-├── admin/dashboard.html   usage leaderboard + one-click offboarding
+├── admin/dashboard.html   manager console: Feishu login, leaderboard, offboarding
 ├── tools/mcp-smoke.js
-└── scripts/demo.sh   full end-to-end demo
+├── docs/             产品介绍.md + 使用说明.md
+└── scripts/          setup.sh (make .env) · start.sh (run) · demo.sh (offline e2e)
 ```
 
-## Run the demo
+## Quick start on a Mac mini (server)
+
+```bash
+tar -xzf enterprise-codex.tgz && cd enterprise-codex
+./scripts/setup.sh                        # writes .env with fresh secrets
+#   edit UPSTREAM_API_KEY in .env (your OWN OpenAI/Azure key) — or skip and:
+./scripts/start.sh --with-mock-upstream   # trial run, no real API calls
+# gateway on http://<lan-ip>:8080  ·  manager console at /  ·  employees point Codex here
+```
+
+## Run the offline demo (all effects, no real services)
 
 ```bash
 cd enterprise-codex
@@ -43,6 +54,8 @@ It starts the mock upstream + gateway, has three employees launch the client
 request), prints the leaderboard, fires the Feishu **离职** webhook for one
 employee, and shows that employee's **still-valid key now returns 401** — the
 core "leave and it stops working" guarantee — then smoke-tests the MCP server.
+It also logs a **manager** into the console via SSO and shows a regular
+**employee being denied (403)** — the manager/employee separation.
 
 ## Run the pieces individually
 
